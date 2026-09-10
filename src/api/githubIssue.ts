@@ -119,3 +119,57 @@ export function commentIssue(
     headers: auth(token)
   }) as unknown as Promise<ApiResult<IssueComment>>
 }
+
+/* ==================== 关联提交（issue 时间线 + 提交详情） ==================== */
+
+export interface IssueTimelineEvent {
+  id: number
+  event: string
+  commit_id: string | null
+  actor: { login: string } | null
+  created_at: string
+}
+
+export interface CommitFile {
+  filename: string
+  status: string
+  additions: number
+  deletions: number
+  changes: number
+  patch?: string
+}
+
+export interface GithubCommitInfo {
+  sha: string
+  html_url: string
+  commit: {
+    message: string
+    author: { name: string; date: string }
+  }
+  author: { login: string } | null
+  files?: CommitFile[]
+}
+
+/** issue 时间线（需要 preview 头），从中提取 referenced 事件的 commit_id 得到关联提交 */
+export function listIssueTimeline(
+  token: string,
+  owner: string,
+  repo: string,
+  num: number
+): Promise<ApiResult<IssueTimelineEvent[]>> {
+  return service.get(`/repos/${owner}/${repo}/issues/${num}/timeline?per_page=100`, {
+    headers: { ...auth(token), Accept: 'application/vnd.github.mockingbird-preview+json' }
+  }) as unknown as Promise<ApiResult<IssueTimelineEvent[]>>
+}
+
+/** 提交详情（展示关联提交的 message / 作者 / sha） */
+export function getCommit(
+  token: string,
+  owner: string,
+  repo: string,
+  sha: string
+): Promise<ApiResult<GithubCommitInfo>> {
+  return service.get(`/repos/${owner}/${repo}/commits/${encodeURIComponent(sha)}`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<GithubCommitInfo>>
+}

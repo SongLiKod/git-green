@@ -151,7 +151,8 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'FileManager' })
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -167,6 +168,8 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+const route = useRoute()
+const router = useRouter()
 
 /* ---------- 移动端辅助 ---------- */
 const fileSheetVisible = ref(false)
@@ -262,6 +265,71 @@ async function initRepo() {
   const bres = await getBranches(pat, r.owner.login, r.name)
   if (bres.code === 200) branchNames.value = (bres.data || []).map(b => b.name)
   loadDir('')
+  handlePreviewQuery()
+}
+
+let previewConsumed = false
+async function handlePreviewQuery() {
+  const p = String(route.query.preview || '')
+  const refVal = String(route.query.ref || '')
+  if (!p) {
+    previewConsumed = false
+    return
+  }
+  if (previewConsumed) return
+  previewConsumed = true
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  previewAtRef(p, refVal)
+}
+
+watch(() => route.query.preview, handlePreviewQuery)
+
+/** 按指定 commit/ref 拉取文件内容并打开预览（从 Issue 提交跳转使用） */
+async function previewAtRef(path: string, refVal: string) {
+  const c = ctx.value
+  if (!c) return
+  await nextTick()
+  const pat = await withPat()
+  const mime = imageMime(path)
+  if (mime) {
+    const raw = await getFileRaw(pat, c.owner, c.repo, path, refVal)
+    if (raw.code !== 200 || !raw.data) {
+      ElMessage.error(`图片读取失败：${raw.msg}`)
+      return
+    }
+    releaseObjectUrl()
+    previewSha.value = raw.data.sha
+    if (raw.data.base64) {
+      previewImage.value = `data:${mime};base64,${raw.data.base64}`
+    } else {
+      const blobRes = await getFileBlob(pat, raw.data.downloadUrl)
+      if (blobRes.code === 200 && blobRes.data) {
+        previewObjectUrl = URL.createObjectURL(blobRes.data)
+        previewImage.value = previewObjectUrl
+      } else {
+        previewImage.value = ''
+      }
+    }
+    previewPath.value = path
+    previewKind.value = 'image'
+    editing.value = false
+    isNewFile.value = false
+    previewVisible.value = true
+    return
+  }
+  const res = await getFileContent(pat, c.owner, c.repo, path, refVal)
+  if (res.code !== 200 || !res.data) {
+    ElMessage.error(`读取失败：${res.msg}`)
+    return
+  }
+  previewPath.value = path
+  previewContent.value = res.data.content
+  previewSha.value = res.data.sha
+  previewKind.value = 'text'
+  editing.value = false
+  isNewFile.value = false
+  previewVisible.value = true
 }
 
 async function loadDir(path: string) {

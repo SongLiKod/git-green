@@ -35,6 +35,12 @@ const service = axios.create({
 })
 
 service.interceptors.request.use(async config => {
+  // 防浏览器 HTTP 缓存：给走 API 的 JSON GET 追加时间戳参数（避开 CORS 预检，不影响 blob 下载）
+  const isGet = (config.method || 'get').toLowerCase() === 'get'
+  const viaApi = config.baseURL === 'https://api.github.com' && config.responseType !== 'blob'
+  if (isGet && viaApi) {
+    config.params = { ...(config.params || {}), _: Date.now() }
+  }
   await acquire()
   ;(config as any).__gated = true
   return config
