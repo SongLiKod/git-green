@@ -59,13 +59,20 @@ service.interceptors.response.use(
       }
     }
     const c = err.response?.status
-    if (c === 401) return { code: 401, msg: 'Token失效' }
-    if (c === 403) return { code: 403, msg: '请求限流或权限不足' }
+    const d = err.response?.data
+    let detail = typeof d?.message === 'string' ? d.message : ''
+    const subErrors = Array.isArray(d?.errors) ? d.errors.map((e: any) => e?.message).filter(Boolean) : []
+    if (subErrors.length) detail = subErrors.join('；')
+    const withDetail = (msg: string) => (detail && detail !== 'Unprocessable Entity' ? `${msg}：${detail}` : msg)
+    if (c === 401) return { code: 401, msg: withDetail('Token失效') }
+    if (c === 403) return { code: 403, msg: withDetail('请求限流或权限不足') }
+    if (c === 422) return { code: 422, msg: withDetail('请求参数或操作状态不合法') }
+    if (detail && detail !== 'Unprocessable Entity') return { code: 500, msg: detail }
     return { code: 500, msg: '请求异常' }
   }
 )
 
-/** API 统一返回结构：200成功 / 401 Token失效 / 403 限流或权限不足 / 500 网络服务异常 */
+/** API 统一返回结构：200成功 / 401 Token失效 / 403 限流或权限不足 / 422 参数或状态不合法 / 500 网络服务异常 */
 export interface ApiResult<T = any> {
   code: number
   msg: string

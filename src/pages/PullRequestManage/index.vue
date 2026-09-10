@@ -139,7 +139,7 @@
                   <el-option label="Squash and merge" value="squash" />
                   <el-option label="Rebase and merge" value="rebase" />
                 </el-select>
-                <el-button type="primary" :loading="saving" @click="doMerge">合并</el-button>
+                <el-button type="primary" :loading="saving" @click="doMerge()">合并</el-button>
                 <el-button type="danger" plain :loading="saving" @click="doClose">关闭</el-button>
               </template>
             </div>
@@ -183,9 +183,11 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { listPRs, createPR, getPRDetail, listPRFiles, reviewPR, mergePR, closePR } from '@/api/githubPullRequest'
 import type { GitHubPR, PRFile } from '@/api/githubPullRequest'
+import type { ApiResult } from '@/api/request'
 import { listComments, commentIssue } from '@/api/githubIssue'
 import type { IssueComment } from '@/api/githubIssue'
 import { getBranches } from '@/api/githubBranch'
+import { getCollaborators } from '@/api/githubRepo'
 import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
@@ -289,27 +291,81 @@ async function submitComment() {
   }
 }
 
+/** 自审被 GitHub 拒绝时，寻找有仓库写权限的其他账号用于审核 */
+async function findReviewerAccount(
+  owner: string,
+  repo: string,
+  authorLogin: string
+): Promise<{ id: string; username: string } | null> {
+  const candidates = accountStore.accounts.filter(a => a.id !== accountStore.activeId && a.username !== authorLogin)
+  for (const acc of candidates) {
+    const token = await accountStore.getPat(acc.id)
+    if (!token) continue
+    const res = await getCollaborators(token, owner, repo)
+    if (res.code !== 200) continue
+    const me = (res.data || []).find(c => c.login === acc.username)
+    if (me && me.permissions && !(me.permissions.push || me.permissions.admin || me.permissions.maintain)) continue
+    return { id: acc.id, username: acc.username }
+  }
+  return null
+}
+
 async function doReview(event: 'APPROVE' | 'REQUEST_CHANGES') {
   if (!ctx.value || !detail.value) return
+  const comment = newComment.value.trim()
+  if (event === 'REQUEST_CHANGES' && !comment) {
+    ElMessage.warning('要求修改必须填写评论内容')
+    return
+  }
+  const authorLogin = detail.value.user?.login
+  const isSelfReview =
+    !!authorLogin && !!accountStore.activeAccount?.username && accountStore.activeAccount.username === authorLogin
   saving.value = true
   const pat = await withPat()
-  const res = await reviewPR(pat, ctx.value.owner, ctx.value.repo, detail.value.number, event, newComment.value.trim())
-  saving.value = false
-  if (res.code === 200 || res.code === 422 || res.code === 201) {
-    if (res.code === 422) {
-      ElMessage.error('审核失败：请先填写评论内容')
-      return
+  let reviewerName = ''
+  let res: Promise<ApiResult> | ApiResult
+  if (isSelfReview) {
+    const reviewer = await findReviewerAccount(ctx.value.owner, ctx.value.repo, authorLogin)
+    res = { code: 422, msg: '自审' }
+    if (reviewer) {
+      const token = await accountStore.getPat(reviewer.id)
+      res = reviewPR(token, ctx.value.owner, ctx.value.repo, detail.value.number, event, comment)
+      reviewerName = reviewer.username
     }
-    ElMessage.success(event === 'APPROVE' ? '已审核通过' : '已要求修改')
+  } else {
+    res = reviewPR(pat, ctx.value.owner, ctx.value.repo, detail.value.number, event, comment)
+  }
+  const r = await res
+  saving.value = false
+  if (r.code === 200 || r.code === 201) {
     await logStore.write({
       module: 'pull',
       action: event === 'APPROVE' ? '审核通过PR' : '要求修改PR',
-      detail: `#${detail.value.number} ${detail.value.title}`,
+      detail: `#${detail.value.number} ${detail.value.title}${reviewerName ? `（${reviewerName}）` : ''}`,
       level: 'warning'
     })
+    if (reviewerName) ElMessage.success(`已由账号 ${reviewerName} 完成审核`)
+    else ElMessage.success(event === 'APPROVE' ? '已审核通过' : '已要求修改')
     openDetail(detail.value)
+  } else if (r.code === 422 && isSelfReview) {
+    saving.value = true
+    let ok = false
+    if (event === 'APPROVE') {
+      try {
+        await ElMessageBox.confirm(
+          'GitHub 不允许 PR 作者自我审核，但作者可以直接合并自己发起的 PR。是否直接进入合并？',
+          '无法自我审核',
+          { type: 'warning', confirmButtonText: '去合并', cancelButtonText: '取消' }
+        )
+        ok = true
+      } catch {
+        /* 用户取消 */
+      }
+    }
+    saving.value = false
+    if (ok) openMerge()
   } else {
-    ElMessage.error(`审核失败：${res.msg}`)
+    ElMessage.error(`审核失败：${r.msg}`)
   }
 }
 
