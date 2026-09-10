@@ -81,6 +81,19 @@ export function setIssueState(
   }) as unknown as Promise<ApiResult<GitHubIssue>>
 }
 
+/** 编辑 Issue（标题 / 描述 / 标签） */
+export function updateIssue(
+  token: string,
+  owner: string,
+  repo: string,
+  num: number,
+  payload: { title?: string; body?: string | null; labels?: string[] }
+): Promise<ApiResult<GitHubIssue>> {
+  return service.patch(`/repos/${owner}/${repo}/issues/${num}`, payload, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<GitHubIssue>>
+}
+
 /** Issue 评论列表（PR 详情评论区复用此接口） */
 export async function listComments(
   token: string,

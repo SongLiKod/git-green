@@ -31,6 +31,7 @@
             <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
             <pre class="m-code" style="max-height: 20vh">{{ detail.body || '（无描述）' }}</pre>
             <div class="m-actions">
+              <van-button size="small" type="primary" plain @click="openEdit(detail)">编辑</van-button>
               <van-button v-if="detail.state === 'open'" size="small" type="warning" plain @click="toggleState(detail)">关闭</van-button>
               <van-button v-else size="small" type="success" plain @click="toggleState(detail)">重新打开</van-button>
             </div>
@@ -53,6 +54,18 @@
               <van-field v-model="createForm.labels" label="标签" placeholder="多个用逗号分隔" />
             </van-cell-group>
             <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitCreate">创建</van-button>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="editVisible" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">编辑 Issue #{{ editTarget?.number || '' }}</div>
+            <van-cell-group inset>
+              <van-field v-model="editForm.title" label="标题" required />
+              <van-field v-model="editForm.body" label="描述" type="textarea" rows="4" />
+              <van-field v-model="editForm.labels" label="标签" placeholder="多个用逗号分隔" />
+            </van-cell-group>
+            <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitEdit">保存</van-button>
           </div>
         </van-popup>
       </template>
@@ -93,9 +106,10 @@
           <el-table-column label="评论" width="70">
             <template #default="{ row }">{{ row.comments }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="180" fixed="right">
+          <el-table-column label="操作" width="230" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row)">详情/评论</el-button>
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="row.state === 'open'" link type="warning" @click="toggleState(row)">关闭</el-button>
               <el-button v-else link type="success" @click="toggleState(row)">重新打开</el-button>
             </template>
@@ -126,6 +140,18 @@
             <el-button type="primary" :loading="saving" @click="submitCreate">创建</el-button>
           </template>
         </el-dialog>
+
+        <el-dialog v-model="editVisible" :title="`编辑 Issue #${editTarget?.number || ''}`" width="520px">
+          <el-form label-width="60px">
+            <el-form-item label="标题" required><el-input v-model="editForm.title" /></el-form-item>
+            <el-form-item label="描述"><el-input v-model="editForm.body" type="textarea" :rows="5" /></el-form-item>
+            <el-form-item label="标签"><el-input v-model="editForm.labels" placeholder="多个用逗号分隔" /></el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="editVisible = false">取消</el-button>
+            <el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button>
+          </template>
+        </el-dialog>
       </template>
       <el-empty v-else description="请先选择仓库" />
     </template>
@@ -140,7 +166,7 @@ import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
-import { listIssues, createIssue, setIssueState, listComments, commentIssue } from '@/api/githubIssue'
+import { listIssues, createIssue, setIssueState, updateIssue, listComments, commentIssue } from '@/api/githubIssue'
 import type { GitHubIssue, IssueComment } from '@/api/githubIssue'
 import { useIsMobile } from '@/utils/platform'
 
@@ -163,6 +189,26 @@ const newComment = ref('')
 
 const createVisible = ref(false)
 const createForm = reactive({ title: '', body: '', labels: '' })
+
+const editVisible = ref(false)
+const editTarget = ref<GitHubIssue | null>(null)
+const editForm = reactive({ title: '', body: '', labels: '' })
+
+/** 判断 issue 是否符合当前列表筛选（open/closed/all） */
+function matchesFilter(i: GitHubIssue): boolean {
+  if (state.value === 'all') return true
+  return i.state === state.value
+}
+
+/** 用最新返回的 issue 更新列表与详情，让变更立即体现 */
+function applyIssue(it: GitHubIssue) {
+  if (!matchesFilter(it)) {
+    issues.value = issues.value.filter(i => i.number !== it.number)
+  } else {
+    issues.value = [it, ...issues.value.filter(i => i.number !== it.number)]
+  }
+  if (detail.value?.number === it.number) detail.value = it
+}
 
 const stateOptions = [
   { text: '开放', value: 'open' },
@@ -200,11 +246,10 @@ async function toggleState(row: GitHubIssue) {
   const pat = await withPat()
   const next = row.state === 'open' ? 'closed' : 'open'
   const res = await setIssueState(pat, ctx.value.owner, ctx.value.repo, row.number, next)
-  if (res.code === 200) {
+  if (res.code === 200 && res.data) {
     ElMessage.success(next === 'closed' ? 'Issue已关闭' : 'Issue已重新打开')
     await logStore.write({ module: 'issue', action: next === 'closed' ? '关闭Issue' : '重新打开Issue', detail: `#${row.number} ${row.title}`, level: 'warning' })
-    detailVisible.value = false
-    loadIssues()
+    applyIssue(res.data)
   } else {
     ElMessage.error(`操作失败：${res.msg}`)
   }
@@ -253,11 +298,46 @@ async function submitCreate() {
   saving.value = false
   if (res.code === 200 || res.code === 201) {
     ElMessage.success('Issue已创建')
-    await logStore.write({ module: 'issue', action: '新建Issue', detail: `#${res.data?.number} ${createForm.title}`, level: 'success' })
+    const it = res.data
+    await logStore.write({ module: 'issue', action: '新建Issue', detail: `#${it?.number} ${createForm.title}`, level: 'success' })
     createVisible.value = false
-    loadIssues()
+    if (it && matchesFilter(it)) applyIssue(it)
+    else loadIssues()
   } else {
     ElMessage.error(`创建失败：${res.msg}`)
+  }
+}
+
+function openEdit(row: GitHubIssue) {
+  editTarget.value = row
+  editForm.title = row.title
+  editForm.body = row.body || ''
+  editForm.labels = row.labels.map(l => l.name).join(',')
+  editVisible.value = true
+}
+
+async function submitEdit() {
+  if (!ctx.value || !editTarget.value) return
+  if (!editForm.title.trim()) {
+    ElMessage.warning('请输入标题')
+    return
+  }
+  saving.value = true
+  const pat = await withPat()
+  const labels = editForm.labels.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+  const res = await updateIssue(pat, ctx.value.owner, ctx.value.repo, editTarget.value.number, {
+    title: editForm.title.trim(),
+    body: editForm.body,
+    labels
+  })
+  saving.value = false
+  if (res.code === 200 && res.data) {
+    ElMessage.success('Issue已更新')
+    await logStore.write({ module: 'issue', action: '编辑Issue', detail: `#${res.data.number} ${res.data.title}` })
+    editVisible.value = false
+    applyIssue(res.data)
+  } else {
+    ElMessage.error(`编辑失败：${res.msg}`)
   }
 }
 
