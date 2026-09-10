@@ -1,0 +1,97 @@
+/**
+ * GitGreen Windows 客户端（Electron 主进程）
+ * 包含全部远程功能 + 本地Git能力（NodeJS 子进程调用 Git）
+ */
+const { app, BrowserWindow, ipcMain, protocol, net, session } = require('electron')
+const path = require('path')
+const fs = require('fs')
+const { spawn } = require('child_process')
+const { pathToFileURL } = require('url')
+
+const DIST_DIR = path.join(__dirname, '..', 'dist')
+
+/** 通过 NodeJS 子进程调用本地 git 命令 */
+function runGit(args, cwd) {
+  return new Promise(resolve => {
+    const child = spawn('git', args, cwd ? { cwd } : {})
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', d => (stdout += String(d)))
+    child.stderr.on('data', d => (stderr += String(d)))
+    child.on('close', code => resolve({ code, stdout, stderr }))
+    child.on('error', err => resolve({ code: -1, stdout, stderr: String(err && err.message ? err.message : err) }))
+  })
+}
+
+ipcMain.handle('git:exec', async (_event, payload) => {
+  const args = Array.isArray(payload && payload.args) ? payload.args : []
+  const cwd = payload && payload.cwd ? String(payload.cwd) : undefined
+  return await runGit(args, cwd)
+})
+
+// 注册特权 scheme：ES Module / fetch / 安全上下文（crypto.subtle 需要安全上下文）
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'gitgreen',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+  }
+])
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    backgroundColor: '#009458',
+    title: 'GitGreen',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL
+  if (devUrl) {
+    win.loadURL(devUrl)
+  } else {
+    win.loadURL('gitgreen://app/index.html')
+  }
+}
+
+app.whenReady().then(() => {
+  // Windows客户端「无跨域限制」：为GitHub资产下载跳转域名注入CORS响应头
+  session.defaultSession.webRequest.onHeadersReceived(
+    {
+      urls: [
+        'https://release-assets.githubusercontent.com/*',
+        'https://objects.githubusercontent.com/*',
+        'https://codeload.github.com/*'
+      ]
+    },
+    (details, callback) => {
+      const headers = details.responseHeaders || {}
+      headers['access-control-allow-origin'] = ['*']
+      headers['access-control-allow-headers'] = ['*']
+      callback({ responseHeaders: headers })
+    }
+  )
+
+  protocol.handle('gitgreen', request => {
+    let urlPath = decodeURIComponent(new URL(request.url).pathname)
+    if (!urlPath || urlPath === '/') urlPath = '/index.html'
+    const filePath = path.join(DIST_DIR, urlPath)
+    if (!filePath.startsWith(DIST_DIR) || !fs.existsSync(filePath)) {
+      return new Response('Not Found', { status: 404 })
+    }
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
+  createWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})

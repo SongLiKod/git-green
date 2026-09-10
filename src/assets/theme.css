@@ -1,0 +1,27 @@
+:root {
+  --color-primary: #009458;
+  --color-primary-light: #34b97c;
+  --color-primary-dark: #007244;
+}
+
+html.light {
+  --bg-page: #ffffff;
+  --bg-card: #f8faf8;
+  --text-main: #1f2937;
+  --text-secondary: #6b7280;
+  --border-color: #e5e7eb;
+}
+
+html.dark {
+  --bg-page: #111816;
+  --bg-card: #1f2925;
+  --text-main: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --border-color: #37413c;
+}
+
+body {
+  background: var(--bg-page);
+  color: var(--text-main);
+  transition: 0.25s ease;
+}

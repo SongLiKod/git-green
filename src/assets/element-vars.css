@@ -1,0 +1,13 @@
+/* Element Plus 深色模式全组件自动适配 */
+@import 'element-plus/theme-chalk/dark/css-vars.css';
+
+:root {
+  --el-color-primary: #009458;
+  --el-color-primary-light-3: #34b97c;
+  --el-color-primary-dark-2: #007244;
+}
+html.dark {
+  --el-color-primary: #009458;
+  --el-color-primary-light-3: #34b97c;
+  --el-color-primary-dark-2: #007244;
+}

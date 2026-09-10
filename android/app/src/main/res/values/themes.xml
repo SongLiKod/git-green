@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GitGreen" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#009458</item>
+        <item name="colorPrimaryDark">#007244</item>
+        <item name="android:statusBarColor">#009458</item>
+    </style>
+</resources>
