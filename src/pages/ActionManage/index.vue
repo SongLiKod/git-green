@@ -64,6 +64,14 @@
             <van-cell-group inset>
               <van-cell title="工作流" :value="triggerTarget?.name" />
               <van-field :model-value="triggerRef" label="分支" placeholder="选择分支" readonly is-link @click="openBranchPicker" />
+              <van-field
+                v-for="inp in triggerInputs"
+                :key="inp.id"
+                :model-value="triggerVals[inp.id]"
+                :label="inputLabel(inp)"
+                :placeholder="inp.description || inp.id"
+                @update:model-value="triggerVals[inp.id] = $event"
+              />
             </van-cell-group>
             <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitTrigger">触发运行</van-button>
           </div>
@@ -170,6 +178,9 @@
             <el-option v-for="b in branchNames" :key="b" :label="b" :value="b" />
           </el-select>
         </el-form-item>
+        <el-form-item v-for="inp in triggerInputs" :key="inp.id" :label="inputLabel(inp)">
+          <el-input v-model="triggerVals[inp.id]" :placeholder="inp.description || inp.id" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="triggerVisible = false">取消</el-button>
@@ -199,7 +210,7 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'ActionManage' })
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -213,7 +224,8 @@ import {
   rerunRun,
   getRunLogs,
   getWorkflowFileContent,
-  saveWorkflowFile
+  saveWorkflowFile,
+  parseWorkflowInputs
 } from '@/api/githubAction'
 import type { Workflow, WorkflowRun } from '@/api/githubAction'
 import { getBranches } from '@/api/githubBranch'
@@ -293,6 +305,13 @@ const branchNames = ref<string[]>([])
 const triggerVisible = ref(false)
 const triggerTarget = ref<Workflow | null>(null)
 const triggerRef = ref('')
+const triggerInputs = ref<ReturnType<typeof parseWorkflowInputs>>([])
+const triggerVals = reactive<Record<string, string>>({})
+
+function inputLabel(inp: (typeof triggerInputs.value)[number]) {
+  const id = inp.id.toLowerCase()
+  return id.includes('version') || id === 'tag' || id.includes('发布') ? '发布tag' : inp.id
+}
 
 const editorVisible = ref(false)
 const editorPath = ref('')
@@ -357,17 +376,28 @@ function viewRuns(w: Workflow) {
   loadRuns()
 }
 
-function openTrigger(w: Workflow) {
+async function openTrigger(w: Workflow) {
+  if (!ctx.value) return
   triggerTarget.value = w
   triggerRef.value = repoStore.currentRepo?.default_branch || branchNames.value[0] || 'main'
+  triggerInputs.value = []
+  Object.keys(triggerVals).forEach(k => delete triggerVals[k])
   triggerVisible.value = true
+  const pat = await withPat()
+  const fc = await getWorkflowFileContent(pat, ctx.value.owner, ctx.value.repo, w.path, triggerRef.value)
+  if (fc.code === 200 && fc.data?.content) {
+    triggerInputs.value = parseWorkflowInputs(base64ToUtf8(fc.data.content))
+    for (const inp of triggerInputs.value) triggerVals[inp.id] = inp.default || ''
+  }
 }
 
 async function submitTrigger() {
   if (!ctx.value || !triggerTarget.value) return
   saving.value = true
   const pat = await withPat()
-  const res = await triggerWorkflow(pat, ctx.value.owner, ctx.value.repo, triggerTarget.value.id, triggerRef.value)
+  const inputs: Record<string, string> = {}
+  for (const inp of triggerInputs.value) inputs[inp.id] = (triggerVals[inp.id] ?? '').trim()
+  const res = await triggerWorkflow(pat, ctx.value.owner, ctx.value.repo, triggerTarget.value.id, triggerRef.value, inputs)
   saving.value = false
   if (res.code === 200 || res.code === 202) {
     ElMessage.success('流水线已触发（若失败请确认该Workflow是否支持 workflow_dispatch 事件）')

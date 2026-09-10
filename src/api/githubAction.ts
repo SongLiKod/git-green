@@ -57,19 +57,86 @@ export function listRuns(
   }) as unknown as Promise<ApiResult<{ workflow_runs: WorkflowRun[]; total_count: number }>>
 }
 
-/** 手动触发流水线（workflow_dispatch） */
+/** 手动触发流水线（workflow_dispatch），inputs 为 yml 中定义的工作流输入参数 */
 export function triggerWorkflow(
   token: string,
   owner: string,
   repo: string,
   workflowId: number,
-  ref: string
+  ref: string,
+  inputs?: Record<string, string>
 ): Promise<ApiResult> {
+  const body: Record<string, unknown> = { ref }
+  if (inputs && Object.keys(inputs).length > 0) body.inputs = inputs
   return service.post(
     `/repos/${owner}/${repo}/actions/workflows/${workflowId}/dispatches`,
-    { ref },
+    body,
     { headers: auth(token) }
   ) as unknown as Promise<ApiResult>
+}
+
+/** 解析 workflow yml 中 on.workflow_dispatch.inputs 定义（轻量 YAML 提取） */
+export function parseWorkflowInputs(content: string): {
+  id: string
+  description: string
+  required: boolean
+  default: string
+  type: string
+}[] {
+  const inputs: { id: string; description: string; required: boolean; default: string; type: string }[] = []
+  const lines = content.split(/\r?\n/)
+  let wdIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*workflow_dispatch:\s*($|#)/.test(lines[i])) {
+      wdIdx = i
+      break
+    }
+  }
+  if (wdIdx < 0) return inputs
+  for (let i = wdIdx + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)inputs:\s*$/)
+    if (m) {
+      const baseIndent = m[1].length
+      let j = i + 1
+      while (j < lines.length) {
+        const raw = lines[j]
+        if (!raw.trim() || /^\s*#/.test(raw)) {
+          j++
+          continue
+        }
+        const indent = (raw.match(/^\s*/) || [''])[0].length
+        if (indent <= baseIndent) break
+        const keyMatch = raw.match(/^(\s*)([A-Za-z0-9_-]+):\s*$/)
+        if (keyMatch && keyMatch[1].length === baseIndent + 2) {
+          const input = { id: keyMatch[2], description: '', required: false, default: '', type: 'string' }
+          inputs.push(input)
+          j++
+          while (j < lines.length) {
+            const pl = lines[j]
+            if (!pl.trim() || /^\s*#/.test(pl)) {
+              j++
+              continue
+            }
+            const pIndent = (pl.match(/^\s*/) || [''])[0].length
+            if (pIndent <= keyMatch[1].length) break
+            const prop = pl.match(/^(\s*)(\w+):\s*(.*)$/)
+            if (prop) {
+              const pv = prop[3].trim().replace(/^['"]|['"]$/g, '')
+              if (prop[2] === 'description') input.description = pv
+              else if (prop[2] === 'required') input.required = pv.toLowerCase() === 'true'
+              else if (prop[2] === 'default') input.default = pv
+              else if (prop[2] === 'type') input.type = pv || 'string'
+            }
+            j++
+          }
+        } else {
+          j++
+        }
+      }
+      break
+    }
+  }
+  return inputs
 }
 
 /** 取消运行中的流水线 */
