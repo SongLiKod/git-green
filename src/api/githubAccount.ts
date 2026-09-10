@@ -12,6 +12,8 @@ export interface GitHubAccount {
   remark: string
   tags: string[]
   group: string
+  /** 自定义 SSH 主机（默认 github.com），用于生成 git@<host>:owner/repo.git 克隆地址 */
+  sshHost: string
   /** AES-256-CBC 加密后的 PAT，仅本地存储 */
   encryptedPat: string
   status: AccountStatus
@@ -49,7 +51,8 @@ export async function verifyPat(
 /** 读取本地账号列表（全部本地持久化，不上传任何服务器） */
 export function getLocalAccountList(): GitHubAccount[] {
   try {
-    return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '[]') as GitHubAccount[]
+    const list = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '[]') as GitHubAccount[]
+    return list.map(a => ({ ...a, sshHost: a.sshHost || 'github.com' }))
   } catch {
     return []
   }
@@ -64,7 +67,8 @@ export async function addAccount(
   pat: string,
   remark: string,
   tags: string[],
-  group: string
+  group: string,
+  sshHost = 'github.com'
 ): Promise<ApiResult<GitHubAccount>> {
   const v = await verifyPat(pat)
   if (v.code !== 200 || !v.data?.login) return { code: v.code, msg: v.msg }
@@ -77,6 +81,7 @@ export async function addAccount(
     remark,
     tags,
     group,
+    sshHost: sshHost.trim() || 'github.com',
     encryptedPat: await encryptPAT(pat),
     status: v.data.status,
     createdAt: Date.now()
@@ -86,15 +91,16 @@ export async function addAccount(
   return { code: 200, msg: 'success', data: account }
 }
 
-/** 修改账号备注/标签/分组 */
+/** 修改账号备注/标签/分组/SSH主机 */
 export function editAccount(
   id: string,
-  patch: Partial<Pick<GitHubAccount, 'remark' | 'tags' | 'group'>>
+  patch: Partial<Pick<GitHubAccount, 'remark' | 'tags' | 'group' | 'sshHost'>>
 ): ApiResult {
   const list = getLocalAccountList()
   const acc = list.find(a => a.id === id)
   if (!acc) return { code: 500, msg: '账号不存在' }
   Object.assign(acc, patch)
+  if (patch.sshHost !== undefined) acc.sshHost = patch.sshHost.trim() || 'github.com'
   saveLocalAccountList(list)
   return { code: 200, msg: 'success', data: acc }
 }
@@ -139,7 +145,7 @@ export function importAccounts(json: string): ApiResult<number> {
   for (const acc of incoming) {
     if (!acc?.id || !acc?.username || !acc?.encryptedPat) continue
     if (list.some(a => a.id === acc.id)) continue
-    list.push(acc)
+    list.push({ ...acc, sshHost: acc.sshHost || 'github.com' })
     count++
   }
   saveLocalAccountList(list)

@@ -38,6 +38,7 @@
             {{ repoStore.getMeta(r.full_name).pin ? '取消置顶' : '置顶' }}
           </van-button>
           <van-button size="mini" type="primary" plain @click="enterRepo(r)">进入</van-button>
+          <van-button size="mini" plain @click="openClone(r)">克隆</van-button>
           <van-button size="mini" type="danger" plain @click="onDeleteRepo(r)">删除</van-button>
         </div>
       </div>
@@ -61,6 +62,23 @@
             </van-cell>
           </van-cell-group>
           <van-button block type="primary" style="margin-top: 14px" @click="submitCreate">创建</van-button>
+        </div>
+      </van-popup>
+
+      <van-popup v-model:show="cloneVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">克隆 {{ cloneRepo?.name || '' }}</div>
+          <van-cell-group inset>
+            <van-cell title="HTTPS" :label="cloneRepo ? cloneUrls(cloneRepo).https : ''" :is-link="false" />
+            <van-cell title="SSH" :label="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" :is-link="false" />
+            <van-cell title="默认SSH" :label="cloneRepo ? defaultSshUrl(cloneRepo) : ''" :is-link="false" />
+          </van-cell-group>
+          <div class="m-actions">
+            <van-button block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).https : '')">复制 HTTPS</van-button>
+            <van-button block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制 SSH</van-button>
+            <van-button block plain @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制 默认SSH</van-button>
+          </div>
+          <div class="m-sub" style="margin: 10px 16px">SSH 为主机账号自定义配置（账号管理可修改）；默认SSH 为 github.com 官方地址</div>
         </div>
       </van-popup>
     </template>
@@ -146,7 +164,7 @@
             <el-table-column label="更新时间" width="160">
               <template #default="{ row }">{{ new Date(row.updated_at).toLocaleString() }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="260" fixed="right">
+            <el-table-column label="操作" width="300" fixed="right">
               <template #default="{ row }">
                 <el-button link :type="repoStore.getMeta(row.full_name).favorite ? 'warning' : ''" @click="repoStore.toggleFavorite(row.full_name)">
                   {{ repoStore.getMeta(row.full_name).favorite ? '取消收藏' : '收藏' }}
@@ -154,6 +172,7 @@
                 <el-button link :type="repoStore.getMeta(row.full_name).pin ? 'primary' : ''" @click="repoStore.togglePin(row.full_name)">
                   {{ repoStore.getMeta(row.full_name).pin ? '取消置顶' : '置顶' }}
                 </el-button>
+                <el-button link type="primary" @click="openClone(row)">克隆</el-button>
                 <el-button link @click="selectRepo(row)">进入</el-button>
                 <el-button link type="danger" @click="onDeleteRepo(row)">删除</el-button>
               </template>
@@ -205,6 +224,25 @@
         <el-button @click="createVisible = false">取消</el-button>
         <el-button type="primary" @click="submitCreate">创建</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="cloneVisible" :title="`克隆 ${cloneRepo?.full_name || ''}`" width="560px">
+      <div class="clone-row">
+        <span class="clone-label">HTTPS</span>
+        <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).https : ''" readonly />
+        <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).https : '')">复制</el-button>
+      </div>
+      <div class="clone-row">
+        <span class="clone-label">SSH</span>
+        <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" readonly />
+        <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制</el-button>
+      </div>
+      <div class="clone-row">
+        <span class="clone-label">默认SSH</span>
+        <el-input :model-value="cloneRepo ? defaultSshUrl(cloneRepo) : ''" readonly />
+        <el-button @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制</el-button>
+      </div>
+      <div class="form-tip">SSH 使用账号自定义主机（账号管理里可修改）；默认SSH 即 github.com 官方地址</div>
     </el-dialog>
     </template>
   </div>
@@ -300,6 +338,40 @@ function onNodeClick(node: TreeNode) {
 function selectRepo(row: GitHubRepo) {
   repoStore.selectRepo(row.full_name)
   ElMessage.success(`已选中仓库 ${row.full_name}，可进入设置/分支/Action/Release/文件模块`)
+}
+
+/* ---------- 克隆地址 ---------- */
+const cloneVisible = ref(false)
+const cloneRepo = ref<GitHubRepo | null>(null)
+
+function cloneUrls(row: GitHubRepo): { https: string; ssh: string } {
+  const accId = repoStore.findAccountIdByRepo(row.full_name) || repoStore.currentAccountId
+  const acc = accountStore.accounts.find(a => a.id === accId)
+  const host = acc?.sshHost?.trim() || 'github.com'
+  return {
+    https: `https://github.com/${row.full_name}.git`,
+    ssh: `git@${host}:${row.full_name}.git`
+  }
+}
+
+function openClone(row: GitHubRepo) {
+  cloneRepo.value = row
+  cloneVisible.value = true
+}
+
+function defaultSshUrl(row: GitHubRepo): string {
+  return `git@github.com:${row.full_name}.git`
+}
+
+function copyClone(text: string) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => ElMessage.success('已复制克隆地址'),
+      () => ElMessage.warning('复制失败，请手动复制')
+    )
+  } else {
+    ElMessage.warning('复制失败，请手动复制')
+  }
 }
 
 /* ---------- 移动端辅助 ---------- */
@@ -457,6 +529,24 @@ onMounted(async () => {
   color: var(--color-primary);
   cursor: pointer;
   font-weight: 600;
+}
+.clone-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.clone-label {
+  width: 52px;
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.form-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 20px;
 }
 .repo-desc {
   font-size: 12px;

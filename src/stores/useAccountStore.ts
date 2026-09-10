@@ -48,8 +48,14 @@ export const useAccountStore = defineStore('account', () => {
     localStorage.setItem(ACTIVE_KEY, id)
   }
 
-  async function addAccount(pat: string, remark: string, tags: string[], group: string): Promise<boolean> {
-    const res = await accountApi.addAccount(pat, remark, tags, group)
+  async function addAccount(
+    pat: string,
+    remark: string,
+    tags: string[],
+    group: string,
+    sshHost = 'github.com'
+  ): Promise<boolean> {
+    const res = await accountApi.addAccount(pat, remark, tags, group, sshHost)
     if (res.code === 200) {
       reload()
       ElMessage.success('账号添加成功，已本地加密常驻')
@@ -60,7 +66,7 @@ export const useAccountStore = defineStore('account', () => {
     return false
   }
 
-  function editAccount(id: string, patch: Partial<Pick<GitHubAccount, 'remark' | 'tags' | 'group'>>) {
+  function editAccount(id: string, patch: Partial<Pick<GitHubAccount, 'remark' | 'tags' | 'group' | 'sshHost'>>) {
     const res = accountApi.editAccount(id, patch)
     if (res.code === 200) {
       reload()

@@ -15,7 +15,7 @@
           <van-image round width="36" height="36" :src="a.avatarUrl" />
           <div class="m-card-title">
             <div class="t">{{ a.remark || a.username }}</div>
-            <div class="m-sub">{{ a.username }} · {{ a.group || '未分组' }}</div>
+            <div class="m-sub">{{ a.username }} · {{ a.group || '未分组' }} · SSH: {{ a.sshHost || 'github.com' }}</div>
           </div>
           <van-tag v-if="a.id === accountStore.activeId" type="primary">当前</van-tag>
           <van-tag :type="a.status === 'normal' ? 'success' : a.status === 'expired' ? 'warning' : 'danger'">
@@ -40,6 +40,7 @@
             <van-field v-model="form.pat" label="PAT令牌" placeholder="ghp_xxx" type="password" />
             <van-cell title="还没有令牌？点此申请" is-link @click="openApply" />
             <van-field v-model="form.remark" label="备注" placeholder="例如：公司账号" />
+            <van-field v-model="form.sshHost" label="SSH主机" placeholder="github.com" />
             <van-field v-model="tagsText" label="标签" placeholder="多个用逗号分隔" />
             <van-field v-model="form.group" label="分组" placeholder="可选" />
           </van-cell-group>
@@ -53,6 +54,7 @@
           <div class="m-popup-title">编辑 {{ editTarget?.username }}</div>
           <van-cell-group inset>
             <van-field v-model="editForm.remark" label="备注" />
+            <van-field v-model="editForm.sshHost" label="SSH主机" placeholder="github.com" />
             <van-field v-model="editTagsText" label="标签" placeholder="多个用逗号分隔" />
             <van-field v-model="editForm.group" label="分组" />
           </van-cell-group>
@@ -148,6 +150,11 @@
         </template>
       </el-table-column>
       <el-table-column prop="group" label="分组" min-width="90" />
+      <el-table-column label="SSH主机" min-width="130">
+        <template #default="{ row }">
+          <span class="mono">{{ row.sshHost || 'github.com' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.status === 'normal' ? 'success' : row.status === 'expired' ? 'warning' : 'danger'" size="small">
@@ -213,6 +220,10 @@
         <el-form-item label="备注">
           <el-input v-model="form.remark" placeholder="例如：公司账号" />
         </el-form-item>
+        <el-form-item label="SSH主机">
+          <el-input v-model="form.sshHost" placeholder="github.com" />
+          <div class="form-tip">SSH克隆地址使用：git@&lt;主机&gt;:owner/repo.git，默认 github.com</div>
+        </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="form.tags" multiple filterable allow-create default-first-option placeholder="输入后回车创建标签" style="width: 100%">
             <el-option v-for="t in knownTags" :key="t" :label="t" :value="t" />
@@ -237,6 +248,10 @@
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="editForm.remark" />
+        </el-form-item>
+        <el-form-item label="SSH主机">
+          <el-input v-model="editForm.sshHost" placeholder="github.com" />
+          <div class="form-tip">SSH克隆地址使用：git@&lt;主机&gt;:owner/repo.git</div>
         </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="editForm.tags" multiple filterable allow-create default-first-option style="width: 100%">
@@ -332,11 +347,11 @@ function switchUse(id: string) {
 const fileInput = ref<HTMLInputElement>()
 const addVisible = ref(false)
 const adding = ref(false)
-const form = reactive({ pat: '', remark: '', tags: [] as string[], group: '' })
+const form = reactive({ pat: '', remark: '', tags: [] as string[], group: '', sshHost: 'github.com' })
 
 const editVisible = ref(false)
 const editTarget = ref<GitHubAccount | null>(null)
-const editForm = reactive({ remark: '', tags: [] as string[], group: '' })
+const editForm = reactive({ remark: '', tags: [] as string[], group: '', sshHost: 'github.com' })
 
 const applyVisible = ref(false)
 const applyForm = reactive({ type: 'classic', scopes: ['repo', 'workflow', 'read:user'] as string[], note: 'GitGreen' })
@@ -429,6 +444,7 @@ function openAdd() {
   form.remark = ''
   form.tags = []
   form.group = ''
+  form.sshHost = 'github.com'
   tagsText.value = ''
   addVisible.value = true
 }
@@ -440,7 +456,7 @@ async function submitAdd() {
   }
   const tags = form.tags.length ? form.tags : tagsText.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
   adding.value = true
-  const ok = await accountStore.addAccount(form.pat.trim(), form.remark.trim(), tags, form.group)
+  const ok = await accountStore.addAccount(form.pat.trim(), form.remark.trim(), tags, form.group, form.sshHost)
   adding.value = false
   if (ok) addVisible.value = false
 }
@@ -450,6 +466,7 @@ function openEdit(row: GitHubAccount) {
   editForm.remark = row.remark
   editForm.tags = [...row.tags]
   editForm.group = row.group
+  editForm.sshHost = row.sshHost || 'github.com'
   editTagsText.value = row.tags.join(',')
   editVisible.value = true
 }
@@ -462,7 +479,8 @@ function submitEdit() {
   accountStore.editAccount(editTarget.value.id, {
     remark: editForm.remark.trim(),
     tags,
-    group: editForm.group
+    group: editForm.group,
+    sshHost: editForm.sshHost.trim() || 'github.com'
   })
   editVisible.value = false
 }
