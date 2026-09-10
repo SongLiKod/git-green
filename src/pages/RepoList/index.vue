@@ -69,12 +69,28 @@
         <div class="m-popup">
           <div class="m-popup-title">克隆 {{ cloneRepo?.name || '' }}</div>
           <van-cell-group inset>
-            <van-cell title="HTTPS" :label="cloneRepo ? cloneUrls(cloneRepo).https : ''" :is-link="false" />
+            <van-cell title="HTTPS" :label="cloneRepo ? cloneUrls(cloneRepo).https : ''" :is-link="false">
+              <template #value>
+                <van-button size="mini" plain @click="cloneRepo && showCloneQr(cloneRepo, cloneUrls(cloneRepo).https, 'HTTPS')">二维码</van-button>
+              </template>
+            </van-cell>
             <template v-if="cloneRepo && isCustomHost(cloneRepo)">
-              <van-cell title="SSH" :label="cloneUrls(cloneRepo).ssh" :is-link="false" />
-              <van-cell title="默认SSH" :label="defaultSshUrl(cloneRepo)" :is-link="false" />
+              <van-cell title="SSH" :label="cloneUrls(cloneRepo).ssh" :is-link="false">
+                <template #value>
+                  <van-button size="mini" plain @click="cloneRepo && showCloneQr(cloneRepo, cloneUrls(cloneRepo).ssh, 'SSH')">二维码</van-button>
+                </template>
+              </van-cell>
+              <van-cell title="默认SSH" :label="defaultSshUrl(cloneRepo)" :is-link="false">
+                <template #value>
+                  <van-button size="mini" plain @click="cloneRepo && showCloneQr(cloneRepo, defaultSshUrl(cloneRepo), '默认SSH')">二维码</van-button>
+                </template>
+              </van-cell>
             </template>
-            <van-cell v-else title="SSH" :label="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" :is-link="false" />
+            <van-cell v-else title="SSH" :label="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" :is-link="false">
+              <template #value>
+                <van-button size="mini" plain @click="cloneRepo && showCloneQr(cloneRepo, cloneUrls(cloneRepo).ssh, 'SSH')">二维码</van-button>
+              </template>
+            </van-cell>
           </van-cell-group>
           <div class="m-actions">
             <van-button block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).https : '')">复制 HTTPS</van-button>
@@ -237,26 +253,32 @@
         <span class="clone-label">HTTPS</span>
         <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).https : ''" readonly />
         <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).https : '')">复制</el-button>
+        <el-button @click="showCloneQr(cloneRepo, cloneRepo ? cloneUrls(cloneRepo).https : '', 'HTTPS')">二维码</el-button>
       </div>
       <template v-if="cloneRepo && isCustomHost(cloneRepo)">
         <div class="clone-row">
           <span class="clone-label">SSH</span>
           <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" readonly />
           <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制</el-button>
+          <el-button @click="showCloneQr(cloneRepo, cloneRepo ? cloneUrls(cloneRepo).ssh : '', 'SSH')">二维码</el-button>
         </div>
         <div class="clone-row">
           <span class="clone-label">默认SSH</span>
           <el-input :model-value="cloneRepo ? defaultSshUrl(cloneRepo) : ''" readonly />
           <el-button @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制</el-button>
+          <el-button @click="showCloneQr(cloneRepo, cloneRepo ? defaultSshUrl(cloneRepo) : '', '默认SSH')">二维码</el-button>
         </div>
       </template>
       <div v-else class="clone-row">
         <span class="clone-label">SSH</span>
         <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" readonly />
         <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制</el-button>
+        <el-button @click="showCloneQr(cloneRepo, cloneRepo ? cloneUrls(cloneRepo).ssh : '', 'SSH')">二维码</el-button>
       </div>
       <div class="form-tip">SSH 使用账号自定义主机（账号管理里可修改）；配置了自定义主机时才额外展示 默认SSH 地址</div>
     </el-dialog>
+
+    <QrDialog v-model="qrVisible" :text="qrText" :title="qrTitle" />
     </template>
   </div>
 </template>
@@ -272,6 +294,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { GitHubRepo } from '@/api/githubRepo'
 import { getBranches } from '@/api/githubBranch'
 import { isWindowsClient, useIsMobile } from '@/utils/platform'
+import QrDialog from '@/components/QrDialog.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -365,6 +388,16 @@ function cloneUrls(row: GitHubRepo): { https: string; ssh: string } {
     https: `https://github.com/${row.full_name}.git`,
     ssh: `git@${host}:${row.full_name}.git`
   }
+}
+
+const qrVisible = ref(false)
+const qrText = ref('')
+const qrTitle = ref('')
+function showCloneQr(row: GitHubRepo | null, text: string, label: string) {
+  if (!row) return
+  qrText.value = text
+  qrTitle.value = `${row.name} · ${label}克隆地址`
+  qrVisible.value = true
 }
 
 function isCustomHost(row: GitHubRepo): boolean {

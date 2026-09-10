@@ -154,6 +154,7 @@
                     <div class="t">{{ art.name }}</div>
                     <div class="m-sub">{{ fmtSize(art.size_in_bytes) }} · {{ art.expired ? '已过期' : '有效' }}</div>
                   </div>
+                  <van-button size="mini" plain @click="showQr(art.archive_download_url, art.name)">二维码</van-button>
                   <van-button size="mini" type="primary" plain :loading="downloading === art.name" :disabled="art.expired" @click="downloadArtifact(art)">下载</van-button>
                 </div>
               </div>
@@ -353,6 +354,7 @@
           </el-table-column>
           <el-table-column label="操作" width="110">
             <template #default="{ row }">
+              <el-button link @click="showQr(row.archive_download_url, row.name)">二维码</el-button>
               <el-button link type="primary" :loading="downloading === row.name" :disabled="row.expired" @click="downloadArtifact(row)">下载</el-button>
             </template>
           </el-table-column>
@@ -376,6 +378,8 @@
       </template>
     </el-dialog>
     </template>
+
+    <QrDialog v-model="qrVisible" :text="qrText" :title="qrTitle" />
   </div>
 </template>
 
@@ -416,6 +420,7 @@ import type { ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
 import { blobDownload } from '@/utils/platform'
+import QrDialog from '@/components/QrDialog.vue'
 import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
@@ -738,6 +743,16 @@ const resultLoading = ref(false)
 const runArtifacts = ref<RunArtifact[]>([])
 const annotations = ref<{ check: string; item: CheckRunAnnotation }[]>([])
 const downloading = ref<string>('')
+
+const qrVisible = ref(false)
+const qrText = ref('')
+const qrTitle = ref('')
+function showQr(text: string, title: string) {
+  if (!text) return
+  qrText.value = text
+  qrTitle.value = title
+  qrVisible.value = true
+}
 
 async function openRunResult(row: WorkflowRun) {
   if (!ctx.value) return

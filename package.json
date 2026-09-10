@@ -1,7 +1,7 @@
 {
   "name": "gitgreen",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "GitGreen 纯前端三端多GitHub账号一站式管理工具",
   "author": "GitGreen",
   "main": "electron/main.cjs",
@@ -19,6 +19,7 @@
     "axios": "^1.7.7",
     "element-plus": "^2.8.4",
     "pinia": "^2.2.4",
+    "qrcode": "^1.5.4",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "vant": "^4.10.2",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.16.11",
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^5.1.4",
     "electron": "^31.7.0",
     "electron-builder": "^25.1.8",

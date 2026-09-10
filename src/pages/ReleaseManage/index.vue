@@ -46,6 +46,7 @@
             <div class="m-section-title" style="margin-left: 0">附件（{{ detail.assets.length }}）</div>
             <van-cell v-for="a in detail.assets" :key="a.id" :title="a.name" :label="formatSize(a.size)">
               <template #value>
+                <van-button size="mini" plain @click="showQr(a.browser_download_url, a.name)">二维码</van-button>
                 <van-button size="mini" type="primary" plain @click="downloadAsset(a)">下载</van-button>
               </template>
             </van-cell>
@@ -189,8 +190,9 @@
             <template #default="{ row }">{{ formatSize(row.size) }}</template>
           </el-table-column>
           <el-table-column prop="download_count" label="下载次数" width="90" />
-          <el-table-column label="操作" width="100">
+          <el-table-column label="操作" width="160">
             <template #default="{ row }">
+              <el-button link @click="showQr(row.browser_download_url, row.name)">二维码</el-button>
               <el-button link type="primary" @click="downloadAsset(row)">下载</el-button>
             </template>
           </el-table-column>
@@ -203,6 +205,8 @@
       </template>
     </el-dialog>
     </template>
+
+    <QrDialog v-model="qrVisible" :text="qrText" :title="qrTitle" />
   </div>
 </template>
 
@@ -217,6 +221,7 @@ import { useLogStore } from '@/stores/useLogStore'
 import * as releaseApi from '@/api/githubRelease'
 import type { Release, ReleaseAsset } from '@/api/githubRelease'
 import { auth } from '@/api/request'
+import QrDialog from '@/components/QrDialog.vue'
 import { blobDownload, tryNativeDownload, useIsMobile } from '@/utils/platform'
 import { saveDownload, listDownloads } from '@/utils/db'
 
@@ -249,6 +254,16 @@ const form = reactive({
   draft: false,
   target_commitish: ''
 })
+
+const qrVisible = ref(false)
+const qrText = ref('')
+const qrTitle = ref('')
+function showQr(text: string, title: string) {
+  if (!text) return
+  qrText.value = text
+  qrTitle.value = title
+  qrVisible.value = true
+}
 
 const detailVisible = ref(false)
 const detail = ref<Release | null>(null)
