@@ -374,6 +374,8 @@ async function applyRestore(content: string) {
     repoStore.reloadMeta()
     settings.init()
     let msg = `还原成功：账号 ${result.accounts} / 分组收藏 ${result.meta} / 下载记录 ${result.downloads} / 日志 ${result.logs}`
+    if (result.email) msg += ` / 邮箱配置 1`
+    if (result.lock) msg += ` / 应用锁设置 1（重启后生效）`
     if (result.successAccounts.length) msg += `\n✓ 密钥可用：${result.successAccounts.join('、')}`
     if (result.failedAccounts.length) msg += `\n✗ 密钥失败（需重新填写PAT）：${result.failedAccounts.join('、')}`
     if (result.failedAccounts.length) {

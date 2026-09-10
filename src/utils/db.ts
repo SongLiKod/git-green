@@ -4,6 +4,7 @@
  */
 import * as crypto from './crypto'
 import { decryptPAT } from './crypto'
+import { getEmailSettings, saveEmailSettings, type EmailSettings } from './emailService'
 
 const DB_NAME = 'gitgreen'
 const STORE_LOGS = 'logs'
@@ -38,6 +39,12 @@ export interface BackupPayload {
   settings?: Record<string, unknown>
   downloads?: DownloadRecord[]
   logs?: OpLog[]
+  emailSettings?: EmailSettings
+  lockConfig?: {
+    data: Record<string, unknown>
+    pinHash?: string
+    pinSalt?: string
+  }
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -199,6 +206,20 @@ export async function createBackup(includeCredentials: boolean, pin?: string): P
   }
   payload.repoMeta = JSON.parse(localStorage.getItem('gitgreen_repo_meta') || '{}')
   payload.settings = JSON.parse(localStorage.getItem('gitgreen_settings') || '{}')
+  if (includeCredentials) {
+    payload.emailSettings = getEmailSettings()
+    let lockData: Record<string, unknown> = {}
+    try {
+      lockData = JSON.parse(localStorage.getItem('gitgreen_lock') || '{}')
+    } catch {
+      lockData = {}
+    }
+    payload.lockConfig = {
+      data: { ...lockData, harden: crypto.isHardened() },
+      pinHash: localStorage.getItem('gitgreen_pin_hash') || '',
+      pinSalt: crypto.getPinSalt()
+    }
+  }
   payload.downloads = await listDownloads()
   payload.logs = await queryLogs()
   return payload
@@ -210,6 +231,8 @@ export interface RestoreResult {
   settings: number
   downloads: number
   logs: number
+  email: number
+  lock: number
   successAccounts: string[]
   failedAccounts: string[]
 }
@@ -219,7 +242,7 @@ export async function restoreBackup(
   opts: { includeCredentials: boolean; overwriteLogs: boolean }
 ): Promise<RestoreResult> {
   if (payload.app !== 'GitGreen') throw new Error('不是有效的 GitGreen 备份文件')
-  const result: RestoreResult = { accounts: 0, meta: 0, settings: 0, downloads: 0, logs: 0, successAccounts: [], failedAccounts: [] }
+  const result: RestoreResult = { accounts: 0, meta: 0, settings: 0, downloads: 0, logs: 0, email: 0, lock: 0, successAccounts: [], failedAccounts: [] }
 
   if (opts.includeCredentials && payload.salt && payload.mkWrapped) {
     await crypto.importKeyMaterial(payload.salt, payload.mkWrapped)
@@ -251,6 +274,19 @@ export async function restoreBackup(
   if (payload.settings && Object.keys(payload.settings).length > 0) {
     localStorage.setItem('gitgreen_settings', JSON.stringify(payload.settings))
     result.settings = 1
+  }
+
+  if (opts.includeCredentials && payload.emailSettings) {
+    saveEmailSettings(payload.emailSettings)
+    result.email = 1
+  }
+
+  if (opts.includeCredentials && payload.lockConfig && payload.lockConfig.data) {
+    if (payload.lockConfig.pinSalt) crypto.importPinSalt(payload.lockConfig.pinSalt)
+    const lock = { ...payload.lockConfig.data, harden: crypto.isHardened() }
+    localStorage.setItem('gitgreen_lock', JSON.stringify(lock))
+    if (payload.lockConfig.pinHash) localStorage.setItem('gitgreen_pin_hash', payload.lockConfig.pinHash)
+    result.lock = 1
   }
 
   for (const d of payload.downloads || []) {

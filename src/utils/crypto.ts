@@ -83,6 +83,16 @@ export async function derivePinHash(pin: string): Promise<string> {
   return toBase64(new Uint8Array(bits))
 }
 
+/** 读取 PIN 派生盐（备份还原口令校验用） */
+export function getPinSalt(): string {
+  return localStorage.getItem(PIN_SALT_KEY) || ''
+}
+
+/** 写入 PIN 派生盐（备份还原时同步，保证口令校验跨设备一致） */
+export function importPinSalt(salt: string): void {
+  if (salt) localStorage.setItem(PIN_SALT_KEY, salt)
+}
+
 async function aesEncrypt(key: CryptoKey, data: Uint8Array): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(16))
   const cipher = await crypto.subtle.encrypt({ name: 'AES-CBC', iv: iv as BufferSource }, key, data as BufferSource)
