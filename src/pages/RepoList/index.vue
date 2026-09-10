@@ -70,15 +70,21 @@
           <div class="m-popup-title">克隆 {{ cloneRepo?.name || '' }}</div>
           <van-cell-group inset>
             <van-cell title="HTTPS" :label="cloneRepo ? cloneUrls(cloneRepo).https : ''" :is-link="false" />
-            <van-cell title="SSH" :label="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" :is-link="false" />
-            <van-cell title="默认SSH" :label="cloneRepo ? defaultSshUrl(cloneRepo) : ''" :is-link="false" />
+            <template v-if="cloneRepo && isCustomHost(cloneRepo)">
+              <van-cell title="SSH" :label="cloneUrls(cloneRepo).ssh" :is-link="false" />
+              <van-cell title="默认SSH" :label="defaultSshUrl(cloneRepo)" :is-link="false" />
+            </template>
+            <van-cell v-else title="SSH" :label="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" :is-link="false" />
           </van-cell-group>
           <div class="m-actions">
             <van-button block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).https : '')">复制 HTTPS</van-button>
-            <van-button block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制 SSH</van-button>
-            <van-button block plain @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制 默认SSH</van-button>
+            <template v-if="cloneRepo && isCustomHost(cloneRepo)">
+              <van-button block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制 SSH</van-button>
+              <van-button block plain @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制 默认SSH</van-button>
+            </template>
+            <van-button v-else block plain @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制 SSH</van-button>
           </div>
-          <div class="m-sub" style="margin: 10px 16px">SSH 为主机账号自定义配置（账号管理可修改）；默认SSH 为 github.com 官方地址</div>
+          <div class="m-sub" style="margin: 10px 16px">配置了自定义 SSH 主机时才显示两个 SSH 地址</div>
         </div>
       </van-popup>
     </template>
@@ -232,17 +238,24 @@
         <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).https : ''" readonly />
         <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).https : '')">复制</el-button>
       </div>
-      <div class="clone-row">
+      <template v-if="cloneRepo && isCustomHost(cloneRepo)">
+        <div class="clone-row">
+          <span class="clone-label">SSH</span>
+          <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" readonly />
+          <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制</el-button>
+        </div>
+        <div class="clone-row">
+          <span class="clone-label">默认SSH</span>
+          <el-input :model-value="cloneRepo ? defaultSshUrl(cloneRepo) : ''" readonly />
+          <el-button @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制</el-button>
+        </div>
+      </template>
+      <div v-else class="clone-row">
         <span class="clone-label">SSH</span>
         <el-input :model-value="cloneRepo ? cloneUrls(cloneRepo).ssh : ''" readonly />
         <el-button @click="copyClone(cloneRepo ? cloneUrls(cloneRepo).ssh : '')">复制</el-button>
       </div>
-      <div class="clone-row">
-        <span class="clone-label">默认SSH</span>
-        <el-input :model-value="cloneRepo ? defaultSshUrl(cloneRepo) : ''" readonly />
-        <el-button @click="copyClone(cloneRepo ? defaultSshUrl(cloneRepo) : '')">复制</el-button>
-      </div>
-      <div class="form-tip">SSH 使用账号自定义主机（账号管理里可修改）；默认SSH 即 github.com 官方地址</div>
+      <div class="form-tip">SSH 使用账号自定义主机（账号管理里可修改）；配置了自定义主机时才额外展示 默认SSH 地址</div>
     </el-dialog>
     </template>
   </div>
@@ -352,6 +365,12 @@ function cloneUrls(row: GitHubRepo): { https: string; ssh: string } {
     https: `https://github.com/${row.full_name}.git`,
     ssh: `git@${host}:${row.full_name}.git`
   }
+}
+
+function isCustomHost(row: GitHubRepo): boolean {
+  const accId = repoStore.findAccountIdByRepo(row.full_name) || repoStore.currentAccountId
+  const acc = accountStore.accounts.find(a => a.id === accId)
+  return (acc?.sshHost?.trim() || 'github.com') !== 'github.com'
 }
 
 function openClone(row: GitHubRepo) {

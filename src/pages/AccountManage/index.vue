@@ -172,7 +172,7 @@
           </span>
         </template>
         <template #default="{ row }">
-          <span class="mono">{{ row.sshHost || 'github.com' }}</span>
+          <span v-if="row.sshHost && row.sshHost.trim() !== 'github.com'" class="mono">{{ row.sshHost }}</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="90">
@@ -379,11 +379,11 @@ function switchUse(id: string) {
 const fileInput = ref<HTMLInputElement>()
 const addVisible = ref(false)
 const adding = ref(false)
-const form = reactive({ pat: '', remark: '', tags: [] as string[], group: '', sshHost: 'github.com' })
+const form = reactive({ pat: '', remark: '', tags: [] as string[], group: '', sshHost: '' })
 
 const editVisible = ref(false)
 const editTarget = ref<GitHubAccount | null>(null)
-const editForm = reactive({ remark: '', tags: [] as string[], group: '', sshHost: 'github.com' })
+const editForm = reactive({ remark: '', tags: [] as string[], group: '', sshHost: '' })
 
 const applyVisible = ref(false)
 const applyForm = reactive({ type: 'classic', scopes: ['repo', 'workflow', 'read:user'] as string[], note: 'GitGreen' })
@@ -484,7 +484,7 @@ function openAdd() {
   form.remark = ''
   form.tags = []
   form.group = ''
-  form.sshHost = 'github.com'
+  form.sshHost = ''
   tagsText.value = ''
   addVisible.value = true
 }
@@ -506,7 +506,7 @@ function openEdit(row: GitHubAccount) {
   editForm.remark = row.remark
   editForm.tags = [...row.tags]
   editForm.group = row.group
-  editForm.sshHost = row.sshHost || 'github.com'
+  editForm.sshHost = row.sshHost && row.sshHost.trim() !== 'github.com' ? row.sshHost : ''
   editTagsText.value = row.tags.join(',')
   editVisible.value = true
 }
