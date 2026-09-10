@@ -95,6 +95,7 @@ export async function downloadWithProgress(
     reqUrl = url.replace(/^https:\/\/api\.github\.com/, '/gh-download')
   }
   const res = (await service.get(reqUrl, {
+    baseURL: '',
     responseType: 'blob',
     timeout: 0,
     headers: { ...auth(token), Accept: 'application/octet-stream' },
