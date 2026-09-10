@@ -46,7 +46,9 @@ class MainActivity : AppCompatActivity() {
                     "GitGreen/$filename"
                 )
                 setAllowedOverRoaming(true)
-                setMimeTypes("application/octet-stream")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    setMimeType("application/octet-stream")
+                }
             }
             // 系统 DownloadManager 原生支持后台下载与断点续传
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -80,7 +82,7 @@ class MainActivity : AppCompatActivity() {
             allowFileAccess = false
             mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, null, true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.addJavascriptInterface(NativeBridge(), "AndroidBridge")
         webView.loadUrl("https://appassets.androidplatform.net/assets/dist/index.html")
