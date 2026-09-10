@@ -68,6 +68,8 @@ service.interceptors.response.use(
     if (c === 403) return { code: 403, msg: withDetail('请求限流或权限不足') }
     if (c === 422) return { code: 422, msg: withDetail('请求参数或操作状态不合法') }
     if (detail && detail !== 'Unprocessable Entity') return { code: 500, msg: detail }
+    const netMsg = typeof err.message === 'string' && err.message ? err.message : ''
+    if (netMsg && netMsg !== 'Request failed with status code undefined') return { code: 500, msg: netMsg }
     return { code: 500, msg: '请求异常' }
   }
 )

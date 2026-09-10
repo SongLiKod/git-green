@@ -100,7 +100,9 @@ app.whenReady().then(() => {
       urls: [
         'https://release-assets.githubusercontent.com/*',
         'https://objects.githubusercontent.com/*',
-        'https://codeload.github.com/*'
+        'https://codeload.github.com/*',
+        'https://*.blob.core.windows.net/*',
+        'https://*.githubusercontent.com/*'
       ]
     },
     (details, callback) => {

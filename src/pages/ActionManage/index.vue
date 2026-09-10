@@ -45,6 +45,7 @@
             </div>
             <div class="m-actions">
               <van-button size="mini" type="primary" plain @click="openLogs(r)">日志</van-button>
+              <van-button size="mini" type="primary" plain @click="openRunResult(r)">产物/结果</van-button>
               <van-button v-if="r.status !== 'completed'" size="mini" type="warning" plain @click="cancel(r)">取消</van-button>
               <van-button v-if="r.status === 'completed'" size="mini" plain @click="rerun(r)">重新运行</van-button>
             </div>
@@ -140,6 +141,39 @@
           </div>
         </van-popup>
 
+        <van-popup v-model:show="resultVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup">
+            <div class="m-popup-title">产物 / 检查结果 #{{ resultRun?.run_number || '' }}</div>
+            <div v-if="resultLoading" style="text-align: center; padding: 30px"><van-loading /></div>
+            <template v-else>
+              <div class="m-section-title">Artifacts（{{ runArtifacts.length }}）</div>
+              <van-empty v-if="runArtifacts.length === 0" description="本次运行无产物" />
+              <div v-for="art in runArtifacts" :key="art.id" class="m-card">
+                <div class="m-card-head">
+                  <div class="m-card-title">
+                    <div class="t">{{ art.name }}</div>
+                    <div class="m-sub">{{ fmtSize(art.size_in_bytes) }} · {{ art.expired ? '已过期' : '有效' }}</div>
+                  </div>
+                  <van-button size="mini" type="primary" plain :loading="downloading === art.name" :disabled="art.expired" @click="downloadArtifact(art)">下载</van-button>
+                </div>
+              </div>
+              <div class="m-section-title">Annotations（{{ annotations.length }}）</div>
+              <van-empty v-if="annotations.length === 0" description="本次运行无检查注释" />
+              <div v-for="(a, i) in annotations" :key="i" class="m-card">
+                <div class="m-card-head">
+                  <van-tag :type="a.item.annotation_level === 'failure' ? 'danger' : a.item.annotation_level === 'warning' ? 'warning' : 'default'">{{ levelText(a.item.annotation_level) }}</van-tag>
+                  <div class="m-card-title">
+                    <div class="t">{{ a.check }}</div>
+                    <div class="m-sub">{{ a.item.path }}:{{ a.item.start_line }}</div>
+                  </div>
+                </div>
+                <div class="ann-msg">{{ a.item.message }}</div>
+              </div>
+            </template>
+            <div class="m-actions"><van-button block @click="closeRunResult">关闭</van-button></div>
+          </div>
+        </van-popup>
+
         <van-popup v-model:show="mPickerVisible" position="bottom" round>
           <van-picker :columns="mPickerColumns" @confirm="onMPickerConfirm" @cancel="mPickerVisible = false" />
         </van-popup>
@@ -199,9 +233,10 @@
             <el-table-column label="开始时间" width="170">
               <template #default="{ row }">{{ new Date(row.created_at).toLocaleString() }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="220">
+            <el-table-column label="操作" width="280">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openLogs(row)">日志</el-button>
+                <el-button link type="primary" @click="openRunResult(row)">产物/结果</el-button>
                 <el-button v-if="row.status !== 'completed'" link type="warning" @click="cancel(row)">取消</el-button>
                 <el-button v-if="row.status === 'completed'" link @click="rerun(row)">重新运行</el-button>
               </template>
@@ -299,6 +334,47 @@
         <el-button @click="closeLogs">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="resultVisible" :title="`产物 / 检查结果（运行 #${resultRun?.run_number || ''}）`" width="860px" top="6vh" v-loading="resultLoading">
+      <div v-if="!resultLoading">
+        <div class="m-section-title">Artifacts（构建产物）</div>
+        <el-table :data="runArtifacts" border stripe size="small">
+          <el-table-column prop="name" label="名称" min-width="220" />
+          <el-table-column label="大小" width="110">
+            <template #default="{ row }">{{ fmtSize(row.size_in_bytes) }}</template>
+          </el-table-column>
+          <el-table-column label="过期" width="80">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.expired ? 'info' : 'success'">{{ row.expired ? '已过期' : '有效' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="created_at" label="生成时间" width="180">
+            <template #default="{ row }">{{ new Date(row.created_at).toLocaleString() }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="110">
+            <template #default="{ row }">
+              <el-button link type="primary" :loading="downloading === row.name" :disabled="row.expired" @click="downloadArtifact(row)">下载</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="m-section-title">Annotations（检查注释）</div>
+        <el-table :data="annotations" border stripe size="small">
+          <el-table-column label="级别" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.item.annotation_level === 'failure' ? 'danger' : row.item.annotation_level === 'warning' ? 'warning' : 'info'">{{ levelText(row.item.annotation_level) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="check" label="检查项" min-width="140" />
+          <el-table-column label="位置" width="160">
+            <template #default="{ row }">{{ row.item.path }}:{{ row.item.start_line }}</template>
+          </el-table-column>
+          <el-table-column prop="item.message" label="内容" min-width="240"><template #default="{ row }"><div class="ann-msg">{{ row.item.message }}</div></template></el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="closeRunResult">关闭</el-button>
+      </template>
+    </el-dialog>
     </template>
   </div>
 </template>
@@ -318,6 +394,7 @@ import {
   cancelRun,
   rerunRun,
   getRunLogs,
+  listRunJobs,
   getWorkflowFileContent,
   saveWorkflowFile,
   parseWorkflowInputs,
@@ -328,12 +405,17 @@ import {
   listRepoSecrets,
   getSecretPublicKey,
   createOrUpdateSecret,
-  deleteSecret
+  deleteSecret,
+  listRunArtifacts,
+  downloadArtifactBlob,
+  listRunCheckRuns,
+  listCheckRunAnnotations
 } from '@/api/githubAction'
-import type { Workflow, WorkflowRun, RepoVariable, RepoSecret } from '@/api/githubAction'
+import type { Workflow, WorkflowRun, RepoVariable, RepoSecret, RunArtifact, CheckRunAnnotation } from '@/api/githubAction'
 import type { ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
+import { blobDownload } from '@/utils/platform'
 import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
@@ -599,6 +681,17 @@ function runText(row: WorkflowRun) {
   return row.status
 }
 
+function fmtSize(bytes: number) {
+  if (!bytes && bytes !== 0) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function levelText(level: string) {
+  return ({ failure: '失败', warning: '警告', notice: '提示' } as Record<string, string>)[level] || level
+}
+
 function viewRuns(w: Workflow) {
   runFilterWorkflow.value = w.id
   tab.value = 'runs'
@@ -637,6 +730,63 @@ async function submitTrigger() {
   } else {
     ElMessage.error(`触发失败：${res.msg}`)
   }
+}
+
+const resultVisible = ref(false)
+const resultRun = ref<WorkflowRun | null>(null)
+const resultLoading = ref(false)
+const runArtifacts = ref<RunArtifact[]>([])
+const annotations = ref<{ check: string; item: CheckRunAnnotation }[]>([])
+const downloading = ref<string>('')
+
+async function openRunResult(row: WorkflowRun) {
+  if (!ctx.value) return
+  resultRun.value = row
+  resultVisible.value = true
+  runArtifacts.value = []
+  annotations.value = []
+  resultLoading.value = true
+  const pat = await withPat()
+  const [ar, jr] = await Promise.all([
+    listRunArtifacts(pat, ctx.value.owner, ctx.value.repo, row.id),
+    listRunJobs(pat, ctx.value.owner, ctx.value.repo, row.id)
+  ])
+  if (ar.code === 200) runArtifacts.value = ar.data?.artifacts || []
+  const anns: { check: string; item: CheckRunAnnotation }[] = []
+  if (jr.code === 200 && jr.data) {
+    for (const job of jr.data.jobs) {
+      const m = job.check_run_url?.match(/\/check-runs\/(\d+)\/?$/)
+      if (!m) continue
+      const aRes = await listCheckRunAnnotations(pat, ctx.value.owner, ctx.value.repo, Number(m[1]))
+      if (aRes.code === 200 && aRes.data) {
+        for (const a of aRes.data) anns.push({ check: `${job.name}（${job.status}${job.conclusion ? '/' + job.conclusion : ''}）`, item: a })
+      }
+    }
+  }
+  annotations.value = anns
+  resultLoading.value = false
+}
+
+async function downloadArtifact(art: RunArtifact) {
+  if (!ctx.value || downloading.value) return
+  downloading.value = art.name
+  try {
+    const pat = await withPat()
+    const res = await downloadArtifactBlob(pat, art.archive_download_url)
+    if (res.code === 200 && res.data) {
+      blobDownload(res.data, `${art.name}.zip`)
+      logStore.write({ module: 'action', action: '下载Artifact', detail: `${art.name} @ #${resultRun.value?.run_number || ''}` })
+    } else {
+      ElMessage.error(`下载失败：${res.msg}`)
+    }
+  } finally {
+    downloading.value = ''
+  }
+}
+
+function closeRunResult() {
+  resultVisible.value = false
+  resultRun.value = null
 }
 
 async function cancel(row: WorkflowRun) {
@@ -800,6 +950,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+}
+.ann-msg {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .form-tip {
   font-size: 12px;

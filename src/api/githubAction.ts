@@ -34,6 +34,7 @@ export interface RunJob {
   conclusion: string | null
   started_at: string
   completed_at: string | null
+  check_run_url: string
 }
 
 /** 获取所有 Workflow 工作流列表 */
@@ -339,4 +340,84 @@ export function createOrUpdateSecret(
 /** 删除仓库 Secret */
 export function deleteSecret(token: string, owner: string, repo: string, name: string): Promise<ApiResult> {
   return service.delete(`/repos/${owner}/${repo}/actions/secrets/${encPath(name)}`, { headers: auth(token) }) as unknown as Promise<ApiResult>
+}
+
+/* ==================== 运行产物 / 检查结果（Artifacts / Annotations） ==================== */
+
+export interface RunArtifact {
+  id: number
+  name: string
+  archive_download_url: string
+  expired: boolean
+  size_in_bytes: number
+  created_at: string
+  expires_at: string
+}
+
+export interface CheckRunInfo {
+  id: number
+  name: string
+  status: string
+  conclusion: string | null
+}
+
+export interface CheckRunAnnotation {
+  path: string
+  start_line: number
+  end_line: number
+  annotation_level: 'notice' | 'warning' | 'failure' | string
+  message: string
+  title: string
+}
+
+export interface RunArtifactsResponse {
+  total_count: number
+  artifacts: RunArtifact[]
+}
+
+/** 某次运行产生的 Artifacts 列表 */
+export function listRunArtifacts(token: string, owner: string, repo: string, runId: number): Promise<ApiResult<RunArtifactsResponse>> {
+  return service.get(`/repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=100`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<RunArtifactsResponse>>
+}
+
+/** 下载运行生成的 Artifact 压缩包（带 Token 全程不跳转） */
+export async function downloadArtifactBlob(token: string, url: string): Promise<ApiResult<Blob>> {
+  let reqUrl = url
+  if (import.meta.env.DEV && /^https:\/\/api\.github\.com/.test(url)) {
+    reqUrl = url.replace(/^https:\/\/api\.github\.com/, '/gh-download')
+  }
+  const res = (await service.get(reqUrl, {
+    baseURL: '',
+    responseType: 'blob',
+    timeout: 0,
+    maxRedirects: 10,
+    headers: { ...auth(token), Accept: 'application/vnd.github+json' }
+  })) as unknown as ApiResult<Blob>
+  return res
+}
+
+/** 某次运行的 Check Runs（产物下的检查结果容器） */
+export function listRunCheckRuns(
+  token: string,
+  owner: string,
+  repo: string,
+  runId: number
+): Promise<ApiResult<{ total_count: number; check_runs: CheckRunInfo[] }>> {
+  return service.get(`/repos/${owner}/${repo}/actions/runs/${runId}/check-runs?per_page=100`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<{ total_count: number; check_runs: CheckRunInfo[] }>>
+}
+
+/** Check Run 的 Annotations（warning/failure 明细行） */
+export function listCheckRunAnnotations(
+  token: string,
+  owner: string,
+  repo: string,
+  checkRunId: number
+): Promise<ApiResult<CheckRunAnnotation[]>> {
+  return service.get(`/repos/${owner}/${repo}/check-runs/${checkRunId}/annotations?per_page=100`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<CheckRunAnnotation[]>>
 }
