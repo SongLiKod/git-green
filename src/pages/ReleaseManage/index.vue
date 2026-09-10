@@ -35,6 +35,7 @@
                 <van-progress :percentage="t.percent" :status="t.status === 'error' ? 'exception' : t.percent >= 100 ? 'success' : ''" style="margin-top: 6px" />
               </div>
               <van-tag :type="t.status === 'done' ? 'success' : t.status === 'error' ? 'danger' : 'primary'">{{ taskStatusText(t) }}</van-tag>
+              <van-button size="mini" type="danger" plain @click="removeTask(t)">删除</van-button>
             </div>
           </div>
         </template>
@@ -136,6 +137,11 @@
           <el-table-column label="状态" width="110">
             <template #default="{ row }">{{ taskStatusText(row) }}</template>
           </el-table-column>
+          <el-table-column label="操作" width="80">
+            <template #default="{ row }">
+              <el-button link type="danger" @click="removeTask(row)">删除</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <el-empty v-if="tasks.length === 0" description="暂无下载任务" :image-size="60" />
       </el-card>
@@ -223,7 +229,7 @@ import type { Release, ReleaseAsset } from '@/api/githubRelease'
 import { auth } from '@/api/request'
 import QrDialog from '@/components/QrDialog.vue'
 import { blobDownload, tryNativeDownload, useIsMobile } from '@/utils/platform'
-import { saveDownload, listDownloads } from '@/utils/db'
+import { saveDownload, listDownloads, removeDownload } from '@/utils/db'
 
 interface DownloadTask {
   id: string
@@ -443,6 +449,12 @@ async function loadTasks() {
   tasks.value = (await listDownloads()).map(t =>
     t.status === 'downloading' ? { ...t, status: 'error' as const } : { ...t }
   )
+}
+
+async function removeTask(t: DownloadTask) {
+  tasks.value = tasks.value.filter(x => x.id !== t.id)
+  await removeDownload(t.id)
+  ElMessage.success('下载任务已删除')
 }
 
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadReleases)

@@ -159,6 +159,23 @@ export async function clearDownloads(): Promise<void> {
   await idbClear(STORE_DOWNLOADS)
 }
 
+/** 删除单条下载记录 */
+export async function removeDownload(id: string): Promise<void> {
+  try {
+    await openDb().then(
+      db =>
+        new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE_DOWNLOADS, 'readwrite')
+          tx.objectStore(STORE_DOWNLOADS).delete(id)
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => reject(tx.error)
+        })
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
 /* ---------------- 备份 / 还原 ---------------- */
 
 export async function createBackup(includeCredentials: boolean, pin?: string): Promise<BackupPayload> {
