@@ -202,7 +202,7 @@
       <div class="settings-group__title"><el-icon><InfoFilled /></el-icon>关于</div>
       <div class="about-grid">
         <div class="about-item"><span>应用</span><b>GitGreen</b></div>
-        <div class="about-item"><span>版本</span><b>v1.0.0</b></div>
+        <div class="about-item"><span>版本</span><b>v{{ appVersion }}</b></div>
         <div class="about-item"><span>运行环境</span><b>{{ runtimeLabel }}</b></div>
         <div class="about-item" v-if="isDesktop"><span>Electron</span><b>{{ electronVersions?.electron ?? '未知' }}</b></div>
         <div class="about-item"><span>数据存储</span><b>LocalStorage + IndexedDB（本机私有化）</b></div>
@@ -250,6 +250,9 @@ import { getEmailSettings, saveEmailSettings, sendEmail, sendPinReminder, type E
 import { getPlatform, isWindowsClient, textDownload } from '@/utils/platform'
 import type { ThemeMode } from '@/stores/useThemeStore'
 import type { BackupPayload } from '@/utils/db'
+import { version } from '../../../package.json'
+
+const appVersion: string = version
 
 const themeStore = useThemeStore()
 const settings = useSettingsStore()
