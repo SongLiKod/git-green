@@ -1,6 +1,5 @@
-<template>
+﻿<template>
   <div class="page">
-    <RepoContextBar />
     <template v-if="repo">
       <el-row :gutter="14">
         <el-col :span="12">
@@ -120,7 +119,6 @@
 defineOptions({ name: 'RepoSetting' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useLogStore } from '@/stores/useLogStore'
@@ -375,8 +373,7 @@ async function removeCollaborator(c: Collaborator) {
   }
 }
 
-watch(() => repoStore.currentRepoFullName, loadAll)
-watch(() => accountStore.activeId, loadAll)
+watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadAll)
 onMounted(loadAll)
 </script>
 

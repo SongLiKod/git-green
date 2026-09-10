@@ -64,6 +64,48 @@ export async function getFileContent(
   }
 }
 
+export interface FileRawResult {
+  /** Base64 原始内容（文件>1MB时为null，需用downloadUrl回退） */
+  base64: string | null
+  sha: string
+  size: number
+  downloadUrl: string
+}
+
+/** 读取文件原始Base64（图片等二进制预览用，不经UTF-8解码） */
+export async function getFileRaw(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string
+): Promise<ApiResult<FileRawResult>> {
+  const res = (await service.get(
+    `/repos/${owner}/${repo}/contents/${encPath(path)}?ref=${encodeURIComponent(ref)}`,
+    { headers: auth(token) }
+  )) as unknown as ApiResult<{ content?: string; sha: string; size: number; download_url: string }>
+  if (res.code !== 200 || !res.data) return { code: res.code, msg: res.msg }
+  return {
+    code: 200,
+    msg: 'success',
+    data: {
+      base64: res.data.content ? res.data.content.replace(/\s/g, '') : null,
+      sha: res.data.sha,
+      size: res.data.size,
+      downloadUrl: res.data.download_url
+    }
+  }
+}
+
+/** 大文件回退：经 download_url 带Token拉取blob（raw.githubusercontent 支持CORS） */
+export function getFileBlob(token: string, url: string): Promise<ApiResult<Blob>> {
+  return service.get(url, {
+    responseType: 'blob',
+    timeout: 0,
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<Blob>>
+}
+
 /** 在线编辑/新增远程文件，直接提交到 GitHub 远程仓库 */
 export function saveFile(
   token: string,

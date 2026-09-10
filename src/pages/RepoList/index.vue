@@ -1,5 +1,72 @@
 <template>
   <div class="page">
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-search v-model="searchKw" placeholder="跨账号全局搜索仓库" shape="round" />
+      <van-tabs v-model:active="accountTabIndex" shrink>
+        <van-tab v-for="acc in accountStore.accounts" :key="acc.id" :title="acc.remark || acc.username" />
+      </van-tabs>
+      <div class="m-toolbar">
+        <van-button type="primary" size="small" @click="createVisible = true">新建远程仓库</van-button>
+        <van-button size="small" :loading="loading" @click="repoStore.refreshCurrent()">刷新</van-button>
+        <van-button size="small" plain :type="onlyFavorite ? 'warning' : 'default'" @click="onlyFavorite = !onlyFavorite">
+          {{ onlyFavorite ? '看全部' : '只看收藏' }}
+        </van-button>
+      </div>
+      <van-empty v-if="displayRepos.length === 0" description="暂无仓库" />
+      <div v-for="r in displayRepos" :key="r.full_name" class="m-card" @click="openSheet(r)">
+        <div class="m-card-head">
+          <div class="m-card-title">
+            <div class="t">
+              <span v-if="repoStore.getMeta(r.full_name).pin" style="color: var(--color-primary)">★ </span>{{ r.name }}
+            </div>
+            <div class="m-sub">{{ r.description || '暂无简介' }}</div>
+          </div>
+          <van-tag :type="r.private ? 'warning' : 'success'">{{ r.private ? '私有' : '公开' }}</van-tag>
+        </div>
+        <div class="m-meta">
+          <span>{{ r.language || '-' }}</span>
+          <span>★ {{ r.stargazers_count }}</span>
+          <span>Fork {{ r.forks_count }}</span>
+          <span>{{ new Date(r.updated_at).toLocaleDateString() }}</span>
+        </div>
+        <div class="m-actions" @click.stop>
+          <van-button size="mini" :type="repoStore.getMeta(r.full_name).favorite ? 'warning' : 'default'" plain @click="repoStore.toggleFavorite(r.full_name)">
+            {{ repoStore.getMeta(r.full_name).favorite ? '取消收藏' : '收藏' }}
+          </van-button>
+          <van-button size="mini" :type="repoStore.getMeta(r.full_name).pin ? 'primary' : 'default'" plain @click="repoStore.togglePin(r.full_name)">
+            {{ repoStore.getMeta(r.full_name).pin ? '取消置顶' : '置顶' }}
+          </van-button>
+          <van-button size="mini" type="primary" plain @click="enterRepo(r)">进入</van-button>
+          <van-button size="mini" type="danger" plain @click="onDeleteRepo(r)">删除</van-button>
+        </div>
+      </div>
+
+      <van-action-sheet
+        v-model:show="sheetVisible"
+        :actions="sheetActions"
+        cancel-text="取消"
+        close-on-click-action
+        @select="onSheetSelect"
+      />
+
+      <van-popup v-model:show="createVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">新建远程仓库</div>
+          <van-cell-group inset>
+            <van-field v-model="createForm.name" label="仓库名" placeholder="my-repo" required />
+            <van-field v-model="createForm.description" label="简介" />
+            <van-cell title="私有仓库">
+              <template #value><van-switch v-model="createForm.private" size="20" /></template>
+            </van-cell>
+          </van-cell-group>
+          <van-button block type="primary" style="margin-top: 14px" @click="submitCreate">创建</van-button>
+        </div>
+      </van-popup>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <div class="page-toolbar">
       <el-input
         v-model="searchKw"
@@ -139,24 +206,28 @@
         <el-button type="primary" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 defineOptions({ name: 'RepoList' })
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { GitHubRepo } from '@/api/githubRepo'
 import { getBranches } from '@/api/githubBranch'
-import { isWindowsClient } from '@/utils/platform'
+import { isWindowsClient, useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const isWindows = isWindowsClient()
+const isMobile = useIsMobile()
+const router = useRouter()
 
 const searchKw = ref('')
 const onlyFavorite = ref(false)
@@ -227,8 +298,43 @@ function onNodeClick(node: TreeNode) {
 }
 
 function selectRepo(row: GitHubRepo) {
-  repoStore.setCurrentRepo(row.full_name)
+  repoStore.selectRepo(row.full_name)
   ElMessage.success(`已选中仓库 ${row.full_name}，可进入设置/分支/Action/Release/文件模块`)
+}
+
+/* ---------- 移动端辅助 ---------- */
+const accountTabIndex = computed({
+  get: () => Math.max(0, accountStore.accounts.findIndex(a => a.id === repoStore.currentAccountId)),
+  set: (i: number) => {
+    const acc = accountStore.accounts[i]
+    if (acc) repoStore.setCurrentAccount(acc.id)
+  }
+})
+
+const sheetVisible = ref(false)
+const sheetRepo = ref<GitHubRepo | null>(null)
+const sheetActions = [
+  { name: '仓库设置', path: '/repo-setting' },
+  { name: '分支管理', path: '/branch' },
+  { name: 'Action流水线', path: '/action' },
+  { name: 'Release管理', path: '/release' },
+  { name: '文件管理', path: '/file' }
+]
+
+function openSheet(r: GitHubRepo) {
+  sheetRepo.value = r
+  sheetVisible.value = true
+}
+
+function onSheetSelect(action: { path: string }) {
+  if (!sheetRepo.value) return
+  repoStore.selectRepo(sheetRepo.value.full_name)
+  router.push(action.path)
+}
+
+function enterRepo(r: GitHubRepo) {
+  repoStore.selectRepo(r.full_name)
+  router.push('/repo-setting')
 }
 
 async function submitCreate() {

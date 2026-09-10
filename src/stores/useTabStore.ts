@@ -17,6 +17,7 @@ export const useTabStore = defineStore('tab', () => {
   const lastActive = ref('')
 
   const cachedNames = ref<string[]>([
+    'Dashboard',
     'AccountManage',
     'RepoList',
     'RepoSetting',

@@ -17,6 +17,8 @@ export const useThemeStore = defineStore('theme', () => {
     const html = document.documentElement
     html.classList.remove('light', 'dark')
     html.classList.add(actualDark.value ? 'dark' : 'light')
+    // Vant 4 深色主题同步
+    html.classList.toggle('van-theme-dark', actualDark.value)
   }
 
   function updateTheme(mode: ThemeMode) {

@@ -3,7 +3,8 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', redirect: '/account' },
+    { path: '/', redirect: '/dashboard' },
+    { path: '/dashboard', name: 'Dashboard', component: () => import('@/pages/Dashboard/index.vue'), meta: { title: '仪表盘' } },
     { path: '/account', name: 'AccountManage', component: () => import('@/pages/AccountManage/index.vue'), meta: { title: '账号管理' } },
     { path: '/repo', name: 'RepoList', component: () => import('@/pages/RepoList/index.vue'), meta: { title: '仓库列表' } },
     { path: '/repo-setting', name: 'RepoSetting', component: () => import('@/pages/RepoSetting/index.vue'), meta: { title: '仓库设置' } },

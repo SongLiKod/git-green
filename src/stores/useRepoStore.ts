@@ -13,6 +13,8 @@ export interface RepoMeta {
 }
 
 const META_KEY = 'gitgreen_repo_meta'
+const CURRENT_ACCOUNT_KEY = 'gitgreen_current_account'
+const CURRENT_REPO_KEY = 'gitgreen_current_repo'
 
 function loadMeta(): Record<string, RepoMeta> {
   try {
@@ -34,8 +36,8 @@ export const useRepoStore = defineStore('repo', () => {
   const reposByAccount = ref<Record<string, GitHubRepo[]>>({})
   const loadingMap = ref<Record<string, boolean>>({})
   const metaMap = ref<Record<string, RepoMeta>>(loadMeta())
-  const currentAccountId = ref<string>('')
-  const currentRepoFullName = ref<string>('')
+  const currentAccountId = ref<string>(localStorage.getItem(CURRENT_ACCOUNT_KEY) || '')
+  const currentRepoFullName = ref<string>(localStorage.getItem(CURRENT_REPO_KEY) || '')
 
   const currentRepos = computed<GitHubRepo[]>(() => reposByAccount.value[currentAccountId.value] || [])
 
@@ -100,6 +102,16 @@ export const useRepoStore = defineStore('repo', () => {
     loadingMap.value[accountId] = false
     if (res.code === 200) {
       reposByAccount.value[accountId] = res.data!
+      // 恢复持久化的仓库选择；失效（如已删除）则回退到首个仓库
+      if (accountId === currentAccountId.value) {
+        const saved = localStorage.getItem(CURRENT_REPO_KEY) || ''
+        const exists = res.data!.some(r => r.full_name === currentRepoFullName.value)
+        if (!exists) {
+          if (res.data!.some(r => r.full_name === saved)) currentRepoFullName.value = saved
+          else if (res.data!.length > 0) setCurrentRepo(res.data![0].full_name)
+          else setCurrentRepo('')
+        }
+      }
     } else {
       ElMessage.error(`仓库加载失败：${res.msg}`)
       if (res.code === 401) accountStore.checkAll()
@@ -113,16 +125,21 @@ export const useRepoStore = defineStore('repo', () => {
 
   function setCurrentAccount(accountId: string) {
     currentAccountId.value = accountId
+    localStorage.setItem(CURRENT_ACCOUNT_KEY, accountId)
     accountStore.switchAccount(accountId)
+    const saved = localStorage.getItem(CURRENT_REPO_KEY) || ''
     const repos = reposByAccount.value[accountId] || []
-    if (!repos.some(r => r.full_name === currentRepoFullName.value)) {
-      currentRepoFullName.value = repos[0]?.full_name || ''
+    if (saved && repos.some(r => r.full_name === saved)) {
+      currentRepoFullName.value = saved
+    } else if (repos.length > 0 && !repos.some(r => r.full_name === currentRepoFullName.value)) {
+      setCurrentRepo(repos[0].full_name)
     }
     loadRepos(accountId)
   }
 
   function setCurrentRepo(fullName: string) {
     currentRepoFullName.value = fullName
+    localStorage.setItem(CURRENT_REPO_KEY, fullName)
   }
 
   /** 当前选中仓库的 owner / name */
@@ -142,6 +159,21 @@ export const useRepoStore = defineStore('repo', () => {
         (item.repo.description || '').toLowerCase().includes(kw) ||
         item.repo.full_name.toLowerCase().includes(kw)
     )
+  }
+
+  /** 全局搜索仓库所属账号（跨账号搜索结果选中时用于同步切换账号） */
+  function findAccountIdByRepo(fullName: string): string | null {
+    for (const [accountId, repos] of Object.entries(reposByAccount.value)) {
+      if (repos.some(r => r.full_name === fullName)) return accountId
+    }
+    return null
+  }
+
+  /** 选中仓库：自动确保所属账号为当前账号（跨账号搜索场景） */
+  function selectRepo(fullName: string) {
+    const ownerId = findAccountIdByRepo(fullName)
+    if (ownerId && ownerId !== currentAccountId.value) setCurrentAccount(ownerId)
+    setCurrentRepo(fullName)
   }
 
   /** 新建远程仓库 */
@@ -192,6 +224,8 @@ export const useRepoStore = defineStore('repo', () => {
     refreshCurrent,
     setCurrentAccount,
     setCurrentRepo,
+    selectRepo,
+    findAccountIdByRepo,
     currentOwnerName,
     search,
     createRepo,

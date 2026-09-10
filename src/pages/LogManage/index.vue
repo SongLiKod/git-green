@@ -1,5 +1,38 @@
 <template>
   <div class="page">
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-search v-model="keyword" placeholder="检索动作 / 详情" />
+      <van-dropdown-menu>
+        <van-dropdown-item v-model="filterModule" :options="moduleOptions" />
+        <van-dropdown-item v-model="filterLevel" :options="levelOptions" />
+      </van-dropdown-menu>
+      <div class="m-toolbar">
+        <van-button size="small" @click="load">刷新</van-button>
+        <van-button size="small" @click="onExport">导出日志</van-button>
+        <van-button size="small" type="danger" plain @click="onClear">清空日志</van-button>
+        <span class="m-sub" style="margin-left: auto">保留 {{ settings.config.logRetentionDays }} 天 · {{ filtered.length }} 条</span>
+      </div>
+      <van-empty v-if="filtered.length === 0" description="暂无操作日志" />
+      <div v-for="l in filtered" :key="l.id" class="m-card">
+        <div class="m-card-head">
+          <div class="m-card-title">
+            <div class="t">{{ l.action }}</div>
+            <div class="m-sub">{{ l.detail || '-' }}</div>
+            <div class="m-sub">{{ new Date(l.time).toLocaleString() }}</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end">
+            <van-tag>{{ moduleLabel(l.module) }}</van-tag>
+            <van-tag :type="l.level === 'success' ? 'success' : l.level === 'warning' ? 'warning' : l.level === 'error' ? 'danger' : 'primary'">
+              {{ levelLabel(l.level) }}
+            </van-tag>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <div class="page-toolbar">
       <el-select v-model="filterModule" clearable placeholder="全部模块" style="width: 150px" @change="applyFilter">
         <el-option v-for="m in MODULES" :key="m.value" :label="m.label" :value="m.value" />
@@ -34,6 +67,7 @@
       </el-table-column>
     </el-table>
     <el-empty v-if="!loading && filtered.length === 0" description="暂无操作日志" />
+    </template>
   </div>
 </template>
 
@@ -42,13 +76,14 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLogStore } from '@/stores/useLogStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { textDownload } from '@/utils/platform'
+import { textDownload, useIsMobile } from '@/utils/platform'
 import type { OpLog } from '@/utils/db'
 
 defineOptions({ name: 'LogManage' })
 
 const logStore = useLogStore()
 const settings = useSettingsStore()
+const isMobile = useIsMobile()
 
 const MODULES = [
   { value: 'account', label: '账号' },
@@ -68,6 +103,15 @@ const loading = ref(false)
 const filterModule = ref('')
 const filterLevel = ref('')
 const keyword = ref('')
+
+const moduleOptions = [{ text: '全部模块', value: '' }, ...MODULES.map(m => ({ text: m.label, value: m.value }))]
+const levelOptions = [
+  { text: '全部级别', value: '' },
+  { text: '信息', value: 'info' },
+  { text: '成功', value: 'success' },
+  { text: '警告', value: 'warning' },
+  { text: '错误', value: 'error' }
+]
 
 const filtered = computed(() =>
   logs.value.filter(l => {

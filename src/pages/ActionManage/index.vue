@@ -1,6 +1,101 @@
-<template>
+﻿<template>
   <div class="page">
-    <RepoContextBar />
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
+      <template v-else>
+        <van-tabs :active="tab === 'workflows' ? 0 : 1" @change="onMTab">
+          <van-tab title="工作流" />
+          <van-tab title="运行记录" />
+        </van-tabs>
+
+        <template v-if="tab === 'workflows'">
+          <div class="m-toolbar">
+            <van-button size="small" :loading="loading" @click="loadWorkflows">刷新</van-button>
+          </div>
+          <van-empty v-if="workflows.length === 0" description="暂无工作流" />
+          <div v-for="w in workflows" :key="w.id" class="m-card" @click="openWSheet(w)">
+            <div class="m-card-head">
+              <div class="m-card-title">
+                <div class="t">{{ w.name }}</div>
+                <div class="m-sub">{{ w.path }}</div>
+              </div>
+              <van-tag :type="w.state === 'active' ? 'success' : 'default'">{{ w.state === 'active' ? '启用' : w.state }}</van-tag>
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="m-toolbar">
+            <van-cell title="筛选" :value="runFilterName" style="flex: 1; padding: 0" @click="openRunFilter" />
+            <van-button size="small" :loading="runsLoading" @click="loadRuns">刷新</van-button>
+            <van-switch v-model="autoRefresh" size="18" title="自动刷新" />
+          </div>
+          <van-empty v-if="runs.length === 0" description="暂无运行记录" />
+          <div v-for="r in runs" :key="r.id" class="m-card">
+            <div class="m-card-head">
+              <div class="m-card-title">
+                <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
+                <div class="m-sub">{{ r.branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
+              </div>
+              <van-tag :type="r.status !== 'completed' ? 'warning' : r.conclusion === 'success' ? 'success' : r.conclusion === 'cancelled' ? 'default' : 'danger'">
+                {{ runText(r) }}
+              </van-tag>
+            </div>
+            <div class="m-actions">
+              <van-button size="mini" type="primary" plain @click="openLogs(r)">日志</van-button>
+              <van-button v-if="r.status !== 'completed'" size="mini" type="warning" plain @click="cancel(r)">取消</van-button>
+              <van-button v-if="r.status === 'completed'" size="mini" plain @click="rerun(r)">重新运行</van-button>
+            </div>
+          </div>
+        </template>
+
+        <van-action-sheet
+          v-model:show="wSheetVisible"
+          :actions="[{ name: '手动触发' }, { name: '查看运行记录' }, { name: '编辑YML' }]"
+          cancel-text="取消"
+          close-on-click-action
+          @select="onWSelect"
+        />
+
+        <van-popup v-model:show="triggerVisible" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">手动触发流水线</div>
+            <van-cell-group inset>
+              <van-cell title="工作流" :value="triggerTarget?.name" />
+              <van-field :model-value="triggerRef" label="分支" placeholder="选择分支" readonly is-link @click="openBranchPicker" />
+            </van-cell-group>
+            <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitTrigger">触发运行</van-button>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="editorVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup">
+            <div class="m-popup-title">{{ editorPath }}</div>
+            <van-field v-model="editorContent" type="textarea" rows="16" class="m-yml" :spellcheck="false" />
+            <van-field v-model="commitMessage" placeholder="提交信息" style="margin-top: 8px" border />
+            <div class="m-actions">
+              <van-button block type="primary" :loading="saving" @click="saveWorkflowYml">保存并提交</van-button>
+            </div>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="logsVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup">
+            <div class="m-popup-title">运行日志 #{{ logsRun?.run_number || '' }}</div>
+            <pre class="m-logs">{{ logsText || '等待日志输出...' }}</pre>
+            <div class="m-actions"><van-button block @click="closeLogs">关闭</van-button></div>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="mPickerVisible" position="bottom" round>
+          <van-picker :columns="mPickerColumns" @confirm="onMPickerConfirm" @cancel="mPickerVisible = false" />
+        </van-popup>
+      </template>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <template v-if="ctx">
       <el-tabs v-model="tab" class="action-tabs">
         <el-tab-pane label="Workflow工作流" name="workflows">
@@ -98,6 +193,7 @@
         <el-button @click="closeLogs">关闭</el-button>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 
@@ -105,7 +201,6 @@
 defineOptions({ name: 'ActionManage' })
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -123,11 +218,65 @@ import {
 import type { Workflow, WorkflowRun } from '@/api/githubAction'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
+import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
+const isMobile = useIsMobile()
+
+/* ---------- 移动端辅助 ---------- */
+const wSheetVisible = ref(false)
+const wSheetTarget = ref<Workflow | null>(null)
+const mPickerVisible = ref(false)
+const mPickerColumns = ref<{ text: string; value: string | number }[]>([])
+let mPickerAction: 'branch' | 'runfilter' = 'branch'
+
+const runFilterName = computed(() => {
+  if (!runFilterWorkflow.value) return '全部工作流'
+  return workflows.value.find(w => w.id === runFilterWorkflow.value)?.name || '已筛选'
+})
+
+function onMTab(index: number) {
+  tab.value = index === 0 ? 'workflows' : 'runs'
+  if (tab.value === 'runs') loadRuns()
+}
+
+function openWSheet(w: Workflow) {
+  wSheetTarget.value = w
+  wSheetVisible.value = true
+}
+
+function onWSelect(action: { name: string }) {
+  const w = wSheetTarget.value
+  if (!w) return
+  if (action.name === '手动触发') openTrigger(w)
+  else if (action.name === '查看运行记录') viewRuns(w)
+  else openEditor(w)
+}
+
+function openBranchPicker() {
+  mPickerAction = 'branch'
+  mPickerColumns.value = branchNames.value.map(b => ({ text: b, value: b }))
+  mPickerVisible.value = true
+}
+
+function openRunFilter() {
+  mPickerAction = 'runfilter'
+  mPickerColumns.value = [{ text: '全部工作流', value: 0 }, ...workflows.value.map(w => ({ text: w.name, value: w.id }))]
+  mPickerVisible.value = true
+}
+
+function onMPickerConfirm(payload: { selectedValues: (string | number)[] }) {
+  const v = payload.selectedValues[0]
+  if (mPickerAction === 'branch') triggerRef.value = String(v)
+  else {
+    runFilterWorkflow.value = Number(v) || undefined
+    loadRuns()
+  }
+  mPickerVisible.value = false
+}
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const tab = ref('workflows')
@@ -355,11 +504,7 @@ watch(autoRefresh, v => {
   else if (refreshTimer) window.clearInterval(refreshTimer)
 })
 
-watch(() => repoStore.currentRepoFullName, () => {
-  loadWorkflows()
-  loadRuns()
-})
-watch(() => accountStore.activeId, () => {
+watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], () => {
   loadWorkflows()
   loadRuns()
 })

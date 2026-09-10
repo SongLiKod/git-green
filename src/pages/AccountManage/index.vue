@@ -1,5 +1,66 @@
 <template>
   <div class="page">
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <div class="m-toolbar">
+        <van-button type="primary" size="small" @click="openAdd">添加账号</van-button>
+        <van-button size="small" :loading="accountStore.checking" @click="accountStore.checkAll()">检测全部</van-button>
+        <van-button size="small" @click="accountStore.exportConfig()">导出配置</van-button>
+        <van-button size="small" @click="fileInput?.click()">导入配置</van-button>
+      </div>
+      <van-empty v-if="accountStore.accounts.length === 0" description="暂无账号，点击上方添加" />
+      <div v-for="a in accountStore.accounts" :key="a.id" class="m-card">
+        <div class="m-card-head">
+          <van-image round width="36" height="36" :src="a.avatarUrl" />
+          <div class="m-card-title">
+            <div class="t">{{ a.remark || a.username }}</div>
+            <div class="m-sub">{{ a.username }} · {{ a.group || '未分组' }}</div>
+          </div>
+          <van-tag v-if="a.id === accountStore.activeId" type="primary">当前</van-tag>
+          <van-tag :type="a.status === 'normal' ? 'success' : a.status === 'expired' ? 'warning' : 'danger'">
+            {{ a.status === 'normal' ? '正常' : a.status === 'expired' ? '过期' : '失效' }}
+          </van-tag>
+        </div>
+        <div v-if="a.tags.length" class="m-tags">
+          <van-tag v-for="t in a.tags" :key="t" plain type="primary">{{ t }}</van-tag>
+        </div>
+        <div class="m-actions">
+          <van-button size="small" type="success" plain :disabled="a.id === accountStore.activeId" @click="switchUse(a.id)">切换使用</van-button>
+          <van-button size="small" plain @click="accountStore.refreshStatus(a)">检测</van-button>
+          <van-button size="small" plain @click="openEdit(a)">编辑</van-button>
+          <van-button size="small" type="danger" plain @click="onDelete(a)">删除</van-button>
+        </div>
+      </div>
+
+      <van-popup v-model:show="addVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">添加 GitHub 账号</div>
+          <van-cell-group inset>
+            <van-field v-model="form.pat" label="PAT令牌" placeholder="ghp_xxx" type="password" />
+            <van-field v-model="form.remark" label="备注" placeholder="例如：公司账号" />
+            <van-field v-model="tagsText" label="标签" placeholder="多个用逗号分隔" />
+            <van-field v-model="form.group" label="分组" placeholder="可选" />
+          </van-cell-group>
+          <div class="m-sub" style="margin: 10px 16px">密钥仅本机 AES-256-CBC 加密存储，永不上传</div>
+          <van-button block type="primary" :loading="adding" @click="submitAdd">校验并添加</van-button>
+        </div>
+      </van-popup>
+
+      <van-popup v-model:show="editVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">编辑 {{ editTarget?.username }}</div>
+          <van-cell-group inset>
+            <van-field v-model="editForm.remark" label="备注" />
+            <van-field v-model="editTagsText" label="标签" placeholder="多个用逗号分隔" />
+            <van-field v-model="editForm.group" label="分组" />
+          </van-cell-group>
+          <van-button block type="primary" style="margin-top: 14px" @click="submitEdit">保存</van-button>
+        </div>
+      </van-popup>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <div class="page-toolbar">
       <el-button type="primary" @click="openAdd">添加账号</el-button>
       <el-button :loading="accountStore.checking" @click="accountStore.checkAll()">检测全部状态</el-button>
@@ -41,7 +102,7 @@
             link
             type="primary"
             :disabled="row.id === accountStore.activeId"
-            @click="accountStore.switchAccount(row.id)"
+            @click="switchUse(row.id)"
           >
             切换使用
           </el-button>
@@ -105,6 +166,7 @@
         <el-button type="primary" @click="submitEdit">保存</el-button>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 
@@ -113,11 +175,23 @@ defineOptions({ name: 'AccountManage' })
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
+import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useIsMobile } from '@/utils/platform'
 import type { GitHubAccount } from '@/api/githubAccount'
 
 const accountStore = useAccountStore()
+const repoStore = useRepoStore()
 const settings = useSettingsStore()
+const isMobile = useIsMobile()
+
+const tagsText = ref('')
+const editTagsText = ref('')
+
+function switchUse(id: string) {
+  accountStore.switchAccount(id)
+  repoStore.setCurrentAccount(id)
+}
 
 const fileInput = ref<HTMLInputElement>()
 const addVisible = ref(false)
@@ -136,6 +210,7 @@ function openAdd() {
   form.remark = ''
   form.tags = []
   form.group = ''
+  tagsText.value = ''
   addVisible.value = true
 }
 
@@ -144,8 +219,9 @@ async function submitAdd() {
     ElMessage.warning('请输入PAT令牌')
     return
   }
+  const tags = form.tags.length ? form.tags : tagsText.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
   adding.value = true
-  const ok = await accountStore.addAccount(form.pat.trim(), form.remark.trim(), form.tags, form.group)
+  const ok = await accountStore.addAccount(form.pat.trim(), form.remark.trim(), tags, form.group)
   adding.value = false
   if (ok) addVisible.value = false
 }
@@ -155,14 +231,18 @@ function openEdit(row: GitHubAccount) {
   editForm.remark = row.remark
   editForm.tags = [...row.tags]
   editForm.group = row.group
+  editTagsText.value = row.tags.join(',')
   editVisible.value = true
 }
 
 function submitEdit() {
   if (!editTarget.value) return
+  const tags = editTagsText.value
+    ? editTagsText.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+    : editForm.tags
   accountStore.editAccount(editTarget.value.id, {
     remark: editForm.remark.trim(),
-    tags: editForm.tags,
+    tags,
     group: editForm.group
   })
   editVisible.value = false

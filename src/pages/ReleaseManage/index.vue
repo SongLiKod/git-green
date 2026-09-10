@@ -1,6 +1,85 @@
-<template>
+﻿<template>
   <div class="page">
-    <RepoContextBar />
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
+      <template v-else>
+        <div class="m-toolbar">
+          <van-button type="primary" size="small" @click="openCreate">新建Release</van-button>
+          <van-button size="small" :loading="loading" @click="loadReleases">刷新</van-button>
+        </div>
+        <van-empty v-if="releases.length === 0" description="暂无 Release" />
+        <div v-for="r in releases" :key="r.id" class="m-card">
+          <div class="m-card-head">
+            <div class="m-card-title">
+              <div class="t">{{ r.tag_name }}</div>
+              <div class="m-sub">{{ r.name && r.name !== r.tag_name ? r.name : '' }} {{ r.published_at ? new Date(r.published_at).toLocaleDateString() : '未发布' }}</div>
+            </div>
+            <van-tag v-if="r.draft">草稿</van-tag>
+            <van-tag v-else-if="r.prerelease" type="warning">测试版</van-tag>
+            <van-tag v-else type="success">正式版</van-tag>
+          </div>
+          <div class="m-actions">
+            <van-button size="mini" type="primary" plain @click="openDetail(r)">详情/下载（{{ r.assets.length }}）</van-button>
+            <van-button size="mini" plain @click="openEdit(r)">编辑</van-button>
+            <van-button size="mini" type="danger" plain @click="onDelete(r)">删除</van-button>
+          </div>
+        </div>
+
+        <template v-if="tasks.length">
+          <div class="m-section-title">下载任务</div>
+          <div v-for="t in tasks" :key="t.id" class="m-card">
+            <div class="m-card-head">
+              <div class="m-card-title">
+                <div class="t">{{ t.filename }}</div>
+                <van-progress :percentage="t.percent" :status="t.status === 'error' ? 'exception' : t.percent >= 100 ? 'success' : ''" style="margin-top: 6px" />
+              </div>
+              <van-tag :type="t.status === 'done' ? 'success' : t.status === 'error' ? 'danger' : 'primary'">{{ taskStatusText(t) }}</van-tag>
+            </div>
+          </div>
+        </template>
+
+        <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup" v-if="detail">
+            <div class="m-popup-title">{{ detail.tag_name }}</div>
+            <pre class="m-code" style="max-height: 22vh">{{ detail.body || '（无描述）' }}</pre>
+            <div class="m-section-title" style="margin-left: 0">附件（{{ detail.assets.length }}）</div>
+            <van-cell v-for="a in detail.assets" :key="a.id" :title="a.name" :label="formatSize(a.size)">
+              <template #value>
+                <van-button size="mini" type="primary" plain @click="downloadAsset(a)">下载</van-button>
+              </template>
+            </van-cell>
+            <div class="m-actions">
+              <van-button size="small" plain type="primary" @click="downloadSource(detail.zipball_url, detail.tag_name + '-source.zip')">源码ZIP</van-button>
+              <van-button size="small" plain type="primary" @click="downloadSource(detail.tarball_url, detail.tag_name + '-source.tar.gz')">源码TAR.GZ</van-button>
+            </div>
+            <div v-for="t in tasks.slice(0, 3)" :key="'d' + t.id" style="margin-bottom: 8px">
+              <div class="m-sub">{{ t.filename }}</div>
+              <van-progress :percentage="t.percent" />
+            </div>
+            <van-button block style="margin-top: 10px" @click="detailVisible = false">关闭</van-button>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="formVisible" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">{{ editingId ? '编辑 Release' : '新建 Release' }}</div>
+            <van-cell-group inset>
+              <van-field v-model="form.tag_name" label="Tag标签" placeholder="v1.0.0" :disabled="!!editingId" required />
+              <van-field v-model="form.target_commitish" label="目标分支" :placeholder="repo?.default_branch || 'main'" />
+              <van-field v-model="form.name" label="标题" />
+              <van-field v-model="form.body" label="描述" type="textarea" rows="4" />
+              <van-cell title="测试版"><template #value><van-switch v-model="form.prerelease" size="20" /></template></van-cell>
+              <van-cell title="草稿版"><template #value><van-switch v-model="form.draft" size="20" /></template></van-cell>
+            </van-cell-group>
+            <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitForm">{{ editingId ? '保存' : '创建' }}</van-button>
+          </div>
+        </van-popup>
+      </template>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <template v-if="ctx">
       <el-card shadow="never" class="mb14">
         <template #header>
@@ -123,6 +202,7 @@
         </div>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 
@@ -130,7 +210,6 @@
 defineOptions({ name: 'ReleaseManage' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -138,7 +217,7 @@ import { useLogStore } from '@/stores/useLogStore'
 import * as releaseApi from '@/api/githubRelease'
 import type { Release, ReleaseAsset } from '@/api/githubRelease'
 import { auth } from '@/api/request'
-import { blobDownload, tryNativeDownload } from '@/utils/platform'
+import { blobDownload, tryNativeDownload, useIsMobile } from '@/utils/platform'
 import { saveDownload, listDownloads } from '@/utils/db'
 
 interface DownloadTask {
@@ -152,6 +231,7 @@ const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
+const isMobile = useIsMobile()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
@@ -350,8 +430,7 @@ async function loadTasks() {
   )
 }
 
-watch(() => repoStore.currentRepoFullName, loadReleases)
-watch(() => accountStore.activeId, loadReleases)
+watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadReleases)
 onMounted(() => {
   loadReleases()
   loadTasks()

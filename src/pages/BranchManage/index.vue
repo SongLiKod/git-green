@@ -1,6 +1,89 @@
-<template>
+﻿<template>
   <div class="page">
-    <RepoContextBar />
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
+      <template v-else>
+        <div class="m-toolbar">
+          <van-button type="primary" size="small" @click="openCreate">创建分支</van-button>
+          <van-button size="small" :loading="loading" @click="loadBranches">刷新</van-button>
+        </div>
+        <div v-for="b in branches" :key="b.name" class="m-card">
+          <div class="m-card-head">
+            <div class="m-card-title">
+              <div class="t">{{ b.name }}</div>
+              <div class="m-sub">{{ b.commit.sha.slice(0, 8) }}</div>
+            </div>
+            <van-tag v-if="b.name === repo?.default_branch" type="success">默认</van-tag>
+            <van-tag v-if="b.protected" type="warning">保护</van-tag>
+          </div>
+          <div class="m-actions">
+            <van-button size="mini" plain @click="openRename(b)">重命名</van-button>
+            <van-button size="mini" plain @click="openProtect(b)">保护规则</van-button>
+            <van-button size="mini" type="danger" plain @click="onDelete(b)">删除</van-button>
+          </div>
+        </div>
+
+        <div class="m-section-title">分支差异对比</div>
+        <van-cell-group inset>
+          <van-cell title="基准分支" :value="diffBase || '选择'" is-link @click="openPicker('base')" />
+          <van-cell title="对比分支" :value="diffHead || '选择'" is-link @click="openPicker('head')" />
+        </van-cell-group>
+        <div class="m-toolbar">
+          <van-button type="primary" size="small" :loading="diffLoading" @click="runDiff">开始对比</van-button>
+        </div>
+        <div v-if="diff" class="m-card">
+          <div class="m-meta">
+            <van-tag type="success">领先 {{ diff.ahead_by }}</van-tag>
+            <van-tag type="warning">落后 {{ diff.behind_by }}</van-tag>
+            <van-tag>{{ diff.status }}</van-tag>
+            <van-tag plain type="primary">差异提交 {{ diff.total_commits }}</van-tag>
+          </div>
+          <van-cell
+            v-for="f in diff.files"
+            :key="f.filename"
+            :title="f.filename"
+            :label="statusText(f.status)"
+            :value="`+${f.additions}/-${f.deletions}`"
+          />
+        </div>
+
+        <van-popup v-model:show="createVisible" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">创建远程分支</div>
+            <van-cell-group inset>
+              <van-field v-model="createForm.name" label="新分支名" placeholder="feature/xxx" required />
+              <van-field :model-value="createForm.from" label="源分支" placeholder="选择源分支" readonly is-link @click="openPicker('from')" />
+            </van-cell-group>
+            <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitCreate">创建</van-button>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="protectVisible" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">保护规则 - {{ protectTarget }}</div>
+            <van-cell-group inset>
+              <van-cell title="管理员强制"><template #value><van-switch v-model="protection.enforceAdmins" size="20" /></template></van-cell>
+              <van-cell title="状态检查"><template #value><van-switch v-model="protection.statusChecks" size="20" /></template></van-cell>
+              <van-field v-model="contextsText" label="必需检查项" placeholder="逗号分隔" :disabled="!protection.statusChecks" />
+              <van-cell title="PR审核"><template #value><van-switch v-model="protection.prReviews" size="20" /></template></van-cell>
+              <van-cell title="必需批准数"><template #value><van-stepper v-model="protection.reviewCount" min="1" max="6" /></template></van-cell>
+            </van-cell-group>
+            <div class="m-actions">
+              <van-button type="primary" block :loading="saving" @click="submitProtect">保存绑定</van-button>
+              <van-button type="danger" plain block @click="removeProtect">移除规则</van-button>
+            </div>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="pickerVisible" position="bottom" round>
+          <van-picker :columns="pickerColumns" @confirm="onPickerConfirm" @cancel="pickerVisible = false" />
+        </van-popup>
+      </template>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <template v-if="ctx">
       <el-card shadow="never" class="mb14">
         <template #header>
@@ -102,6 +185,7 @@
         <el-button type="primary" :loading="saving" @click="submitProtect">保存绑定</el-button>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 
@@ -109,7 +193,6 @@
 defineOptions({ name: 'BranchManage' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -125,11 +208,31 @@ import {
   deleteBranchProtection
 } from '@/api/githubBranch'
 import type { GitHubBranch, BranchCompareResult } from '@/api/githubBranch'
+import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
+const isMobile = useIsMobile()
+
+const contextsText = ref('')
+const pickerVisible = ref(false)
+const pickerTarget = ref<'from' | 'base' | 'head'>('base')
+const pickerColumns = computed(() => branches.value.map(b => ({ text: b.name })))
+
+function openPicker(target: 'from' | 'base' | 'head') {
+  pickerTarget.value = target
+  pickerVisible.value = true
+}
+
+function onPickerConfirm(payload: { selectedValues: string[] }) {
+  const v = payload.selectedValues[0]
+  if (pickerTarget.value === 'from') createForm.from = v
+  else if (pickerTarget.value === 'base') diffBase.value = v
+  else diffHead.value = v
+  pickerVisible.value = false
+}
 
 const repo = computed(() => repoStore.currentRepo)
 const ctx = computed(() => repoStore.currentOwnerName())
@@ -293,10 +396,14 @@ async function openProtect(row: GitHubBranch) {
     protection.prReviews = false
     protection.reviewCount = 1
   }
+  contextsText.value = protection.contexts.join(',')
 }
 
 async function submitProtect() {
   if (!ctx.value) return
+  if (contextsText.value) {
+    protection.contexts = contextsText.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+  }
   saving.value = true
   const pat = await withPat()
   const res = await saveBranchProtection(pat, ctx.value.owner, ctx.value.repo, protectTarget.value, {
@@ -335,8 +442,7 @@ async function removeProtect() {
   }
 }
 
-watch(() => repoStore.currentRepoFullName, loadBranches)
-watch(() => accountStore.activeId, loadBranches)
+watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadBranches)
 onMounted(loadBranches)
 </script>
 

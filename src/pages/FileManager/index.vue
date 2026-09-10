@@ -1,6 +1,60 @@
-<template>
+﻿<template>
   <div class="page">
-    <RepoContextBar />
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
+      <template v-else>
+        <div class="m-toolbar">
+          <van-button size="small" :disabled="!currentPath" @click="loadDir(parentPath)">上一级</van-button>
+          <van-cell title="分支" :value="branch" style="flex: 1; padding: 0" @click="openBranchPicker" />
+          <van-button size="small" type="primary" @click="openNewFile">新建文件</van-button>
+        </div>
+        <div class="m-sub" style="margin: 6px 14px 0">{{ currentPath || '根目录' }}</div>
+        <van-empty v-if="entries.length === 0" description="空目录" />
+        <van-cell
+          v-for="e in entries"
+          :key="e.path"
+          :title="(e.type === 'dir' ? '📁 ' : '📄 ') + e.name"
+          :label="e.type === 'dir' ? '目录' : formatSize(e.size)"
+          :is-link="e.type === 'dir'"
+          @click="onMEntry(e)"
+        />
+
+        <van-action-sheet
+          v-model:show="fileSheetVisible"
+          :actions="[{ name: '预览' }, { name: '编辑' }, { name: '删除', color: '#ee0a24' }]"
+          cancel-text="取消"
+          close-on-click-action
+          @select="onFileSheetSelect"
+        />
+
+        <van-popup v-model:show="previewVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup">
+            <div class="m-popup-title">{{ previewPath }}</div>
+            <template v-if="editing">
+              <van-field v-model="editContent" type="textarea" rows="14" class="m-yml" />
+              <van-field v-model="commitMessage" placeholder="提交信息（commit message）" style="margin-top: 8px" border />
+              <div class="m-actions">
+                <van-button block type="primary" :loading="saving" @click="submitSave">提交到GitHub远程仓库</van-button>
+              </div>
+            </template>
+            <template v-else-if="previewKind === 'image'">
+              <div class="img-view-m"><img :src="previewImage" alt="preview" /></div>
+            </template>
+            <template v-else>
+              <pre class="m-code">{{ previewContent }}</pre>
+            </template>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="branchPickerVisible" position="bottom" round>
+          <van-picker :columns="branchColumns" @confirm="onBranchConfirm" @cancel="branchPickerVisible = false" />
+        </van-popup>
+      </template>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
     <template v-if="ctx">
       <el-card shadow="never">
         <template #header>
@@ -57,11 +111,14 @@
 
     <el-dialog
       v-model="previewVisible"
-      :title="`${previewPath}${editing ? '（编辑中）' : '（在线预览）'}`"
+      :title="`${previewPath}${editing ? '（编辑中）' : previewKind === 'image' ? '（图片预览）' : '（在线预览）'}`"
       width="820px"
       top="4vh"
     >
       <el-input v-if="editing" v-model="editContent" type="textarea" :rows="22" class="code-editor" spellcheck="false" />
+      <div v-else-if="previewKind === 'image'" class="img-view">
+        <img :src="previewImage" alt="preview" />
+      </div>
       <pre v-else class="code-view">{{ previewContent }}</pre>
       <el-input v-if="editing" v-model="commitMessage" placeholder="提交信息（commit message）" style="margin-top: 10px" />
       <template #footer>
@@ -70,11 +127,12 @@
           <el-button type="primary" :loading="saving" @click="submitSave">提交到GitHub远程仓库</el-button>
         </template>
         <template v-else>
-          <el-button type="primary" @click="startEdit">编辑此文件</el-button>
+          <el-button v-if="previewKind !== 'image'" type="primary" @click="startEdit">编辑此文件</el-button>
           <el-button @click="previewVisible = false">关闭</el-button>
         </template>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 
@@ -82,19 +140,53 @@
 defineOptions({ name: 'FileManager' })
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
-import { getFileTree, getFileContent, saveFile, deleteFile } from '@/api/githubFile'
+import { getFileTree, getFileContent, getFileRaw, getFileBlob, saveFile, deleteFile } from '@/api/githubFile'
 import type { FileEntry } from '@/api/githubFile'
 import { getBranches } from '@/api/githubBranch'
+import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
+const isMobile = useIsMobile()
+
+/* ---------- 移动端辅助 ---------- */
+const fileSheetVisible = ref(false)
+const fileSheetEntry = ref<FileEntry | null>(null)
+const branchPickerVisible = ref(false)
+const branchColumns = computed(() => branchNames.value.map(b => ({ text: b, value: b })))
+const parentPath = computed(() => currentPath.value.split('/').slice(0, -1).join('/'))
+
+function onMEntry(e: FileEntry) {
+  if (e.type === 'dir') loadDir(e.path)
+  else {
+    fileSheetEntry.value = e
+    fileSheetVisible.value = true
+  }
+}
+
+async function onFileSheetSelect(action: { name: string }) {
+  const e = fileSheetEntry.value
+  if (!e) return
+  if (action.name === '预览') await preview(e)
+  else if (action.name === '编辑') await editFile(e)
+  else await removeFile(e)
+}
+
+function openBranchPicker() {
+  branchPickerVisible.value = true
+}
+
+function onBranchConfirm(payload: { selectedValues: string[] }) {
+  branch.value = payload.selectedValues[0]
+  branchPickerVisible.value = false
+  loadDir(currentPath.value)
+}
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const entries = ref<FileEntry[]>([])
@@ -108,10 +200,30 @@ const previewVisible = ref(false)
 const previewPath = ref('')
 const previewContent = ref('')
 const previewSha = ref('')
+const previewKind = ref<'text' | 'image'>('text')
+const previewImage = ref('')
+let previewObjectUrl = ''
 const editing = ref(false)
 const editContent = ref('')
 const commitMessage = ref('Update file')
 const isNewFile = ref(false)
+
+const IMAGE_MIMES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif'
+}
+
+function imageMime(name: string): string | null {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  return IMAGE_MIMES[ext] || null
+}
 
 const pathSegs = computed(() => (currentPath.value ? currentPath.value.split('/') : []))
 
@@ -160,6 +272,34 @@ function openEntry(row: FileEntry) {
 async function preview(row: FileEntry) {
   if (!ctx.value) return
   const pat = await withPat()
+  const mime = imageMime(row.name)
+  if (mime) {
+    const raw = await getFileRaw(pat, ctx.value.owner, ctx.value.repo, row.path, branch.value)
+    if (raw.code !== 200 || !raw.data) {
+      ElMessage.error(`图片读取失败：${raw.msg}`)
+      return
+    }
+    releaseObjectUrl()
+    previewSha.value = raw.data.sha
+    if (raw.data.base64) {
+      previewImage.value = `data:${mime};base64,${raw.data.base64}`
+    } else {
+      const blobRes = await getFileBlob(pat, raw.data.downloadUrl)
+      if (blobRes.code === 200 && blobRes.data) {
+        previewObjectUrl = URL.createObjectURL(blobRes.data)
+        previewImage.value = previewObjectUrl
+      } else {
+        ElMessage.error(`图片读取失败：${blobRes.msg}`)
+        return
+      }
+    }
+    previewPath.value = row.path
+    previewKind.value = 'image'
+    editing.value = false
+    isNewFile.value = false
+    previewVisible.value = true
+    return
+  }
   const res = await getFileContent(pat, ctx.value.owner, ctx.value.repo, row.path, branch.value)
   if (res.code !== 200 || !res.data) {
     ElMessage.error(`读取失败：${res.msg}`)
@@ -168,10 +308,22 @@ async function preview(row: FileEntry) {
   previewPath.value = row.path
   previewContent.value = res.data.content
   previewSha.value = res.data.sha
+  previewKind.value = 'text'
   editing.value = false
   isNewFile.value = false
   previewVisible.value = true
 }
+
+function releaseObjectUrl() {
+  if (previewObjectUrl) {
+    URL.revokeObjectURL(previewObjectUrl)
+    previewObjectUrl = ''
+  }
+}
+
+watch(previewVisible, v => {
+  if (!v) releaseObjectUrl()
+})
 
 function startEdit() {
   editContent.value = previewContent.value
@@ -180,6 +332,10 @@ function startEdit() {
 }
 
 async function editFile(row: FileEntry) {
+  if (imageMime(row.name)) {
+    ElMessage.info('图片等二进制文件不支持在线编辑')
+    return
+  }
   await preview(row)
   startEdit()
 }
@@ -192,6 +348,7 @@ function cancelEdit() {
 function openNewFile() {
   if (!ctx.value) return
   isNewFile.value = true
+  previewKind.value = 'text'
   previewPath.value = currentPath.value ? `${currentPath.value}/new-file.txt` : 'new-file.txt'
   previewContent.value = ''
   editContent.value = ''
@@ -271,8 +428,7 @@ async function removeFile(row: FileEntry) {
   }
 }
 
-watch(() => repoStore.currentRepoFullName, initRepo)
-watch(() => accountStore.activeId, initRepo)
+watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], initRepo)
 onMounted(initRepo)
 </script>
 
@@ -299,6 +455,20 @@ onMounted(initRepo)
 }
 .file-name {
   cursor: pointer;
+}
+.img-view {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  height: 56vh;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-page);
+}
+.img-view img {
+  max-width: 100%;
+  max-height: 100%;
 }
 .code-view {
   background: var(--bg-page);

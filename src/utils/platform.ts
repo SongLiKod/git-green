@@ -1,6 +1,7 @@
 /**
  * 三端平台识别：Web网页端 / Windows客户端(Electron) / Android客户端(WebView)
  */
+import { computed, ref } from 'vue'
 
 export type PlatformType = 'web' | 'windows' | 'android'
 
@@ -50,6 +51,16 @@ export function isWindowsClient(): boolean {
 /** 是否 Android 客户端 */
 export function isAndroidClient(): boolean {
   return getPlatform() === 'android'
+}
+
+/** 响应式窄屏检测（≤768px 即移动形态） */
+const mediaQuery = window.matchMedia('(max-width: 768px)')
+const narrowScreen = ref(mediaQuery.matches)
+mediaQuery.addEventListener('change', e => (narrowScreen.value = e.matches))
+
+/** 移动端形态：Android 客户端或窄屏（页面据此渲染 Vant 移动版 UI） */
+export function useIsMobile() {
+  return computed(() => getPlatform() === 'android' || narrowScreen.value)
 }
 
 /**

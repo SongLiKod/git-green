@@ -1,0 +1,6 @@
+/* Vant 移动端组件库：绿色主题对齐 GitGreen 品牌色 */
+:root {
+  --van-primary-color: #009458;
+  --van-success-color: #009458;
+  --van-blue: #009458;
+}
