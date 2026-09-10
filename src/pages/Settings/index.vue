@@ -2,7 +2,7 @@
   <div class="page settings-page">
     <!-- 外观主题 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Sunny /></el-icon>外观主题<span class="sub">{{ themeHint }}</span></div>
+      <div class="settings-group__title"><GgIcon :size="16" />外观主题<span class="sub">{{ themeHint }}</span></div>
       <el-radio-group :model-value="themeStore.themeMode" class="theme-radio" @update:model-value="onThemeModeChange">
         <el-radio-button value="system">跟随系统</el-radio-button>
         <el-radio-button value="light">浅色模式</el-radio-button>
@@ -12,7 +12,7 @@
 
     <!-- 页面打开方式（桌面端） -->
     <div v-if="isDesktop" class="settings-group">
-      <div class="settings-group__title"><el-icon><Grid /></el-icon>页面打开方式</div>
+      <div class="settings-group__title"><GgIcon :size="16" />页面打开方式</div>
       <el-radio-group :model-value="config.pageMode" class="theme-radio" @update:model-value="onPageModeChange">
         <el-radio-button value="single">单页显示</el-radio-button>
         <el-radio-button value="multi">多标签页</el-radio-button>
@@ -22,7 +22,7 @@
 
     <!-- 通用 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Setting /></el-icon>通用</div>
+      <div class="settings-group__title"><GgIcon :size="16" />通用</div>
       <div class="setting-row">
         <div class="setting-row__label"><span>自动同步仓库列表</span><span class="desc">定期刷新各账号的仓库数据</span></div>
         <el-switch :model-value="config.autoSyncEnabled" @change="(v: any) => settings.update({ autoSyncEnabled: !!v })" />
@@ -49,7 +49,7 @@
 
     <!-- 健康巡检 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Monitor /></el-icon>健康巡检</div>
+      <div class="settings-group__title"><GgIcon :size="16" />健康巡检</div>
       <div class="setting-row">
         <div class="setting-row__label"><span>启用定时巡检</span><span class="desc">定期检测各账号 Token 状态（正常/过期/失效），异常自动弹窗提醒</span></div>
         <el-switch :model-value="config.inspectionEnabled" @change="(v: any) => settings.update({ inspectionEnabled: !!v })" />
@@ -62,7 +62,7 @@
 
     <!-- 请求性能 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Odometer /></el-icon>请求性能</div>
+      <div class="settings-group__title"><GgIcon :size="16" />请求性能</div>
       <div class="setting-row">
         <div class="setting-row__label"><span>最大并发数</span><span class="desc">批量操作与资源刷新的并发上限，过高易触发限流</span></div>
         <el-input-number :model-value="config.concurrencyLimit" :min="1" :max="16" @update:model-value="(v: any) => settings.update({ concurrencyLimit: v || 4 })" />
@@ -79,7 +79,7 @@
 
     <!-- 数据备份 / 还原 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Files /></el-icon>数据备份 / 还原<span class="sub">账号密钥使用 AES-256-CBC 加密存储</span></div>
+      <div class="settings-group__title"><GgIcon :size="16" />数据备份 / 还原<span class="sub">账号密钥使用 AES-256-CBC 加密存储</span></div>
       <div class="setting-row">
         <div class="setting-row__label"><span>导出备份</span><span class="desc">包含账号、收藏分组、设置、下载记录与操作日志</span></div>
         <div class="setting-row__action">
@@ -103,7 +103,7 @@
 
     <!-- 安全与锁定 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Lock /></el-icon>安全与锁定<span class="sub">应用锁 · 口令加固 · 自动锁定</span></div>
+      <div class="settings-group__title"><GgIcon :size="16" />安全与锁定<span class="sub">应用锁 · 口令加固 · 自动锁定</span></div>
       <div class="setting-row">
         <div class="setting-row__label"><span>启用应用锁</span><span class="desc">启动与回到前台时需输入口令</span></div>
         <el-switch :model-value="lockState.enabled" @change="onToggleLock" />
@@ -144,7 +144,7 @@
 
     <!-- 邮箱提醒（口令备份） -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><Message /></el-icon>邮箱提醒（口令备份）<span class="sub">设置口令时可发送提醒到指定邮箱</span></div>
+      <div class="settings-group__title"><GgIcon :size="16" />邮箱提醒（口令备份）<span class="sub">设置口令时可发送提醒到指定邮箱</span></div>
       <div class="setting-row">
         <div class="setting-row__label"><span>启用邮件提醒</span><span class="desc">设置/修改口令时自动发送提醒邮件（EmailJS，用户显式触发）</span></div>
         <el-switch :model-value="email.enabled" @change="onEmailEnabled" />
@@ -186,7 +186,7 @@
 
     <!-- 危险操作 -->
     <div class="settings-group settings-group--danger">
-      <div class="settings-group__title"><el-icon><WarningFilled /></el-icon>危险操作</div>
+      <div class="settings-group__title"><GgIcon :size="16" />危险操作</div>
       <div class="setting-row">
         <div class="setting-row__label"><span>重置资源数据（保留账号）</span><span class="desc">清除仓库缓存、收藏分组、下载记录与操作日志，保留账号与设置，便于重新同步</span></div>
         <el-button type="warning" plain :loading="resetting" @click="doResetData">重置</el-button>
@@ -199,7 +199,7 @@
 
     <!-- 关于 -->
     <div class="settings-group">
-      <div class="settings-group__title"><el-icon><InfoFilled /></el-icon>关于</div>
+      <div class="settings-group__title"><GgIcon :size="16" />关于</div>
       <div class="about-grid">
         <div class="about-item"><span>应用</span><b>GitGreen</b></div>
         <div class="about-item"><span>版本</span><b>v1.0.0</b></div>
@@ -237,7 +237,7 @@
 defineOptions({ name: 'Settings' })
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Files, Grid, InfoFilled, Lock, Message, Monitor, Odometer, Setting, Sunny, WarningFilled } from '@element-plus/icons-vue'
+import GgIcon from '@/components/GgIcon.vue'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { useSettingsStore, SYNC_INTERVAL_OPTIONS } from '@/stores/useSettingsStore'
 import type { SyncIntervalMinutes, PageMode } from '@/stores/useSettingsStore'

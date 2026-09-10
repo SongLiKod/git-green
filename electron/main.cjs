@@ -76,6 +76,7 @@ function createWindow() {
     height: 900,
     backgroundColor: '#009458',
     title: 'GitGreen',
+    icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
