@@ -352,7 +352,7 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'AccountManage' })
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -478,6 +478,7 @@ async function removeSshKey(k: SshKey) {
 }
 
 onMounted(loadSshKeys)
+watch(() => [accountStore.activeId, accountStore.activeAccount?.id], loadSshKeys)
 
 function openAdd() {
   form.pat = ''
