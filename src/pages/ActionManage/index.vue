@@ -766,6 +766,7 @@ watch(autoRefresh, v => {
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], () => {
   loadWorkflows()
   loadRuns()
+  if (tab.value === 'vars') loadVars()
 })
 
 onMounted(() => {
