@@ -6,6 +6,7 @@
         <van-button type="primary" size="small" plain @click="openApply">申请PAT</van-button>
         <van-button type="primary" size="small" @click="openAdd">添加账号</van-button>
         <van-button size="small" :loading="accountStore.checking" @click="accountStore.checkAll()">检测全部</van-button>
+        <van-button size="small" plain @click="sshInfoVisible = true">SSH说明</van-button>
         <van-button size="small" @click="accountStore.exportConfig()">导出配置</van-button>
         <van-button size="small" @click="fileInput?.click()">导入配置</van-button>
       </div>
@@ -120,6 +121,20 @@
           <van-button block type="primary" :loading="sshSaving" @click="submitSshKey">添加</van-button>
         </div>
       </van-popup>
+
+      <van-popup v-model:show="sshInfoVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">自定义 SSH 主机使用说明</div>
+          <div class="m-sub" style="margin: 0 6px 10px">
+            克隆地址 git@&lt;SSH主机&gt;:owner/repo.git 使用账号配置的主机；非 github.com 时，需在本地 ~/.ssh/config 配置映射，例如：
+          </div>
+          <pre class="m-code">{{ sshConfigSample }}</pre>
+          <div class="m-sub" style="margin: 10px 6px">
+            将主机指向 github.com 并指定你的私钥文件后即可正常使用；Windows 路径为 C:\Users\你的用户名\.ssh\config。
+          </div>
+          <van-button block type="primary" @click="sshInfoVisible = false">知道了</van-button>
+        </div>
+      </van-popup>
     </template>
 
     <!-- 桌面形态（Element Plus） -->
@@ -151,6 +166,11 @@
       </el-table-column>
       <el-table-column prop="group" label="分组" min-width="90" />
       <el-table-column label="SSH主机" min-width="130">
+        <template #header>
+          <span class="ssh-host-header">SSH主机
+            <el-icon class="ssh-info-icon" title="如何使用自定义SSH主机" @click.stop="sshInfoVisible = true"><InfoFilled /></el-icon>
+          </span>
+        </template>
         <template #default="{ row }">
           <span class="mono">{{ row.sshHost || 'github.com' }}</span>
         </template>
@@ -315,6 +335,17 @@
         <el-button type="primary" :loading="sshSaving" @click="submitSshKey">添加</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="sshInfoVisible" title="自定义 SSH 主机使用说明" width="600px">
+      <div class="ssh-info-body">
+        <p>克隆地址中的 <code>git@&lt;SSH主机&gt;:owner/repo.git</code> 使用的是你为本账号配置的 SSH 主机。若主机不是 <code>github.com</code>，需要在你本地电脑的 SSH 配置文件（<code>~/.ssh/config</code>）中写一条映射，例如：</p>
+        <pre class="ssh-config">{{ sshConfigSample }}</pre>
+        <p>将 <code>{{ accountStore.activeAccount?.sshHost?.trim() || 'your.host' }}</code> 指向 <code>github.com</code>，并指定你自己的私钥文件（<code>~/.ssh/your_private_key</code>）。配置完成后，<code>git@SongLiKod.com:...</code> 这类地址即可正常 clone / push。Windows 路径为 <code>C:\Users\你的用户名\.ssh\config</code>。</p>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="sshInfoVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
     </template>
   </div>
 </template>
@@ -323,6 +354,7 @@
 defineOptions({ name: 'AccountManage' })
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -390,6 +422,14 @@ const sshLoading = ref(false)
 const sshVisible = ref(false)
 const sshSaving = ref(false)
 const sshForm = reactive({ title: '', key: '' })
+const sshInfoVisible = ref(false)
+
+const sshConfigSample = computed(() => {
+  const acc = accountStore.activeAccount
+  const host = acc?.sshHost?.trim() || 'github.com'
+  const user = acc?.username || '你的用户名'
+  return `Host ${host}\n    HostName github.com\n    User ${user}\n    AddKeysToAgent yes\n    IgnoreUnknown UseKeychain\n    IdentityFile ~/.ssh/your_private_key`
+})
 
 async function loadSshKeys() {
   const pat = await accountStore.getPat()
@@ -552,6 +592,43 @@ function onImportFile(e: Event) {
   display: block;
   font-size: 12px;
   line-height: 1.5;
+  word-break: break-all;
+}
+.ssh-host-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ssh-info-icon {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+.ssh-info-icon:hover {
+  color: var(--color-primary);
+}
+.ssh-info-body p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-main);
+  margin: 8px 0;
+}
+.ssh-info-body code {
+  font-family: Consolas, monospace;
+  background: var(--bg-page);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.ssh-config {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-main);
+  white-space: pre-wrap;
   word-break: break-all;
 }
 .mono {
