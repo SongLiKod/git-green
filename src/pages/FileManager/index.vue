@@ -28,9 +28,12 @@
           @select="onFileSheetSelect"
         />
 
-        <van-popup v-model:show="previewVisible" position="bottom" round :style="{ height: '86%' }">
+        <van-popup v-model:show="previewVisible" position="bottom" round :style="{ height: fsVisible ? '100%' : '86%' }">
           <div class="m-popup">
-            <div class="m-popup-title">{{ previewPath }}</div>
+            <div class="m-popup-title-row">
+              <span class="m-popup-title">{{ previewPath }}</span>
+              <van-button size="mini" plain @click="fsVisible = !fsVisible">{{ fsVisible ? '退出全屏' : '全屏' }}</van-button>
+            </div>
             <template v-if="editing">
               <van-field v-model="editContent" type="textarea" rows="14" class="m-yml" />
               <van-field v-model="commitMessage" placeholder="提交信息（commit message）" style="margin-top: 8px" border />
@@ -111,10 +114,20 @@
 
     <el-dialog
       v-model="previewVisible"
-      :title="`${previewPath}${editing ? '（编辑中）' : previewKind === 'image' ? '（图片预览）' : '（在线预览）'}`"
+      :fullscreen="fsVisible"
       width="820px"
       top="4vh"
+      :show-close="false"
     >
+      <template #header>
+        <div class="preview-header">
+          <span class="preview-title">{{ previewPath }}{{ editing ? '（编辑中）' : previewKind === 'image' ? '（图片预览）' : '（在线预览）' }}</span>
+          <span class="preview-ops">
+            <el-button link type="primary" @click="fsVisible = !fsVisible">{{ fsVisible ? '退出全屏' : '全屏' }}</el-button>
+            <el-button link @click="previewVisible = false">关闭</el-button>
+          </span>
+        </div>
+      </template>
       <el-input v-if="editing" v-model="editContent" type="textarea" :rows="22" class="code-editor" spellcheck="false" />
       <div v-else-if="previewKind === 'image'" class="img-view">
         <img :src="previewImage" alt="preview" />
@@ -202,6 +215,7 @@ const previewContent = ref('')
 const previewSha = ref('')
 const previewKind = ref<'text' | 'image'>('text')
 const previewImage = ref('')
+const fsVisible = ref(false)
 let previewObjectUrl = ''
 const editing = ref(false)
 const editContent = ref('')
@@ -445,6 +459,34 @@ onMounted(initRepo)
 .crumb {
   margin-bottom: 12px;
 }
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.preview-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-ops {
+  display: flex;
+  flex: none;
+}
+.m-popup-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.m-popup-title-row :deep(.m-popup-title) {
+  margin: 0;
+  flex: 1;
+  text-align: left;
+}
 .link-text {
   color: var(--color-primary);
   cursor: pointer;
@@ -487,5 +529,13 @@ onMounted(initRepo)
   font-family: Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
+}
+</style>
+
+<style>
+.el-dialog.is-fullscreen .code-view,
+.el-dialog.is-fullscreen .img-view,
+.el-dialog.is-fullscreen .code-editor textarea {
+  height: calc(100vh - 150px);
 }
 </style>
