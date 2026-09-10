@@ -103,7 +103,7 @@
 defineOptions({ name: 'Dashboard' })
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Folder, Tools, Share, VideoPlay, Download, Document } from '@element-plus/icons-vue'
+import { Folder, Tools, Share, VideoPlay, Download, Document, Tickets, Connection } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useLogStore } from '@/stores/useLogStore'
@@ -157,7 +157,9 @@ const quickEntries = [
   { path: '/branch', title: '分支管理', icon: Share },
   { path: '/action', title: 'Action流水线', icon: VideoPlay },
   { path: '/release', title: 'Release管理', icon: Download },
-  { path: '/file', title: '文件管理', icon: Document }
+  { path: '/file', title: '文件管理', icon: Document },
+  { path: '/issue', title: 'Issue', icon: Tickets },
+  { path: '/pull', title: 'PullRequest', icon: Connection }
 ]
 
 function enterRepo(repo: GitHubRepo) {

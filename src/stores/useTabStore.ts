@@ -25,6 +25,8 @@ export const useTabStore = defineStore('tab', () => {
     'ActionManage',
     'ReleaseManage',
     'FileManager',
+    'IssueManage',
+    'PullRequestManage',
     'LogManage',
     'Settings'
   ])

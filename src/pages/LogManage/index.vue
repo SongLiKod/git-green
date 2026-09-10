@@ -92,6 +92,8 @@ const MODULES = [
   { value: 'action', label: 'Action' },
   { value: 'release', label: 'Release' },
   { value: 'file', label: '文件' },
+  { value: 'issue', label: 'Issue' },
+  { value: 'pull', label: 'PullRequest' },
   { value: 'settings', label: '设置' },
   { value: 'backup', label: '备份' },
   { value: 'lock', label: '安全' },

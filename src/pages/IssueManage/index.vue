@@ -1,0 +1,307 @@
+<template>
+  <div class="page">
+    <!-- 移动端形态（Vant） -->
+    <template v-if="isMobile">
+      <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
+      <template v-else>
+        <div class="m-toolbar">
+          <van-dropdown-menu style="flex: 1">
+            <van-dropdown-item v-model="state" :options="stateOptions" @change="loadIssues" />
+          </van-dropdown-menu>
+          <van-button size="small" :loading="loading" @click="loadIssues">刷新</van-button>
+          <van-button size="small" type="primary" @click="openCreate">新建</van-button>
+        </div>
+        <van-empty v-if="issues.length === 0" description="暂无 Issue" />
+        <div v-for="i in issues" :key="i.number" class="m-card" @click="openDetail(i)">
+          <div class="m-card-head">
+            <div class="m-card-title">
+              <div class="t">#{{ i.number }} {{ i.title }}</div>
+              <div class="m-sub">{{ i.user?.login }} · {{ new Date(i.updated_at).toLocaleString() }}</div>
+            </div>
+            <van-tag :type="i.state === 'open' ? 'success' : 'default'">{{ i.state === 'open' ? '开放' : '已关闭' }}</van-tag>
+          </div>
+          <div v-if="i.labels.length" class="m-tags">
+            <van-tag v-for="l in i.labels" :key="l.id" color="#{{ l.color }}" plain>{{ l.name }}</van-tag>
+          </div>
+          <div class="m-sub" style="margin-top: 6px">💬 {{ i.comments }}</div>
+        </div>
+
+        <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup" v-if="detail">
+            <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
+            <pre class="m-code" style="max-height: 20vh">{{ detail.body || '（无描述）' }}</pre>
+            <div class="m-actions">
+              <van-button v-if="detail.state === 'open'" size="small" type="warning" plain @click="toggleState(detail)">关闭</van-button>
+              <van-button v-else size="small" type="success" plain @click="toggleState(detail)">重新打开</van-button>
+            </div>
+            <div class="m-section-title" style="margin-left: 0">评论（{{ comments.length }}）</div>
+            <div v-for="c in comments" :key="c.id" class="m-card" style="margin: 0 0 8px">
+              <div class="m-sub">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
+              <pre class="m-code" style="max-height: none; border: none; padding: 6px 0">{{ c.body }}</pre>
+            </div>
+            <van-field v-model="newComment" type="textarea" rows="2" placeholder="写评论..." />
+            <van-button block type="primary" style="margin-top: 10px" :loading="saving" @click="submitComment">发表评论</van-button>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="createVisible" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">新建 Issue</div>
+            <van-cell-group inset>
+              <van-field v-model="createForm.title" label="标题" required />
+              <van-field v-model="createForm.body" label="描述" type="textarea" rows="4" />
+              <van-field v-model="createForm.labels" label="标签" placeholder="多个用逗号分隔" />
+            </van-cell-group>
+            <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitCreate">创建</van-button>
+          </div>
+        </van-popup>
+      </template>
+    </template>
+
+    <!-- 桌面形态（Element Plus） -->
+    <template v-else>
+      <template v-if="ctx">
+        <div class="page-toolbar">
+          <el-select v-model="state" style="width: 130px" @change="loadIssues">
+            <el-option label="开放" value="open" />
+            <el-option label="已关闭" value="closed" />
+            <el-option label="全部" value="all" />
+          </el-select>
+          <el-button @click="loadIssues">刷新</el-button>
+          <el-button type="primary" @click="openCreate">新建 Issue</el-button>
+        </div>
+        <el-table :data="issues" border stripe v-loading="loading">
+          <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
+          <el-table-column label="Issue" min-width="260">
+            <template #default="{ row }">
+              <div class="issue-title">#{{ row.number }} {{ row.title }}</div>
+              <div class="issue-meta">{{ row.user?.login }} · 更新于 {{ new Date(row.updated_at).toLocaleString() }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="标签" min-width="160">
+            <template #default="{ row }">
+              <el-tag v-for="l in row.labels" :key="l.id" size="small" class="tag-item" :color="l.color ? '#' + l.color : undefined" style="color: #fff; border: none">
+                {{ l.name }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.state === 'open' ? 'success' : 'info'">{{ row.state === 'open' ? '开放' : '已关闭' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="评论" width="70">
+            <template #default="{ row }">{{ row.comments }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDetail(row)">详情/评论</el-button>
+              <el-button v-if="row.state === 'open'" link type="warning" @click="toggleState(row)">关闭</el-button>
+              <el-button v-else link type="success" @click="toggleState(row)">重新打开</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-dialog v-model="detailVisible" :title="detail ? `#${detail.number} ${detail.title}` : ''" width="680px" top="6vh">
+          <template v-if="detail">
+            <pre class="body-pre">{{ detail.body || '（无描述）' }}</pre>
+            <div class="sub-title">评论（{{ comments.length }}）</div>
+            <div v-for="c in comments" :key="c.id" class="comment-item">
+              <div class="comment-head">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
+              <pre class="comment-body">{{ c.body }}</pre>
+            </div>
+            <el-input v-model="newComment" type="textarea" :rows="3" placeholder="写评论..." />
+            <el-button type="primary" style="margin-top: 10px" :loading="saving" @click="submitComment">发表评论</el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="createVisible" title="新建 Issue" width="520px">
+          <el-form label-width="60px">
+            <el-form-item label="标题" required><el-input v-model="createForm.title" /></el-form-item>
+            <el-form-item label="描述"><el-input v-model="createForm.body" type="textarea" :rows="5" /></el-form-item>
+            <el-form-item label="标签"><el-input v-model="createForm.labels" placeholder="多个用逗号分隔" /></el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="createVisible = false">取消</el-button>
+            <el-button type="primary" :loading="saving" @click="submitCreate">创建</el-button>
+          </template>
+        </el-dialog>
+      </template>
+      <el-empty v-else description="请先选择仓库" />
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+defineOptions({ name: 'IssueManage' })
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useAccountStore } from '@/stores/useAccountStore'
+import { useRepoStore } from '@/stores/useRepoStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useLogStore } from '@/stores/useLogStore'
+import { listIssues, createIssue, setIssueState, listComments, commentIssue } from '@/api/githubIssue'
+import type { GitHubIssue, IssueComment } from '@/api/githubIssue'
+import { useIsMobile } from '@/utils/platform'
+
+const accountStore = useAccountStore()
+const repoStore = useRepoStore()
+const settings = useSettingsStore()
+const logStore = useLogStore()
+const isMobile = useIsMobile()
+
+const ctx = computed(() => repoStore.currentOwnerName())
+const issues = ref<GitHubIssue[]>([])
+const loading = ref(false)
+const saving = ref(false)
+const state = ref('open')
+
+const detailVisible = ref(false)
+const detail = ref<GitHubIssue | null>(null)
+const comments = ref<IssueComment[]>([])
+const newComment = ref('')
+
+const createVisible = ref(false)
+const createForm = reactive({ title: '', body: '', labels: '' })
+
+const stateOptions = [
+  { text: '开放', value: 'open' },
+  { text: '已关闭', value: 'closed' },
+  { text: '全部', value: 'all' }
+]
+
+async function withPat() {
+  return await accountStore.getPat(repoStore.currentAccountId)
+}
+
+async function loadIssues() {
+  if (!ctx.value) return
+  loading.value = true
+  const pat = await withPat()
+  const res = await listIssues(pat, ctx.value.owner, ctx.value.repo, state.value)
+  loading.value = false
+  if (res.code === 200) issues.value = res.data || []
+  else ElMessage.error(`Issue加载失败：${res.msg}`)
+}
+
+async function openDetail(row: GitHubIssue) {
+  if (!ctx.value) return
+  detail.value = row
+  newComment.value = ''
+  comments.value = []
+  detailVisible.value = true
+  const pat = await withPat()
+  const res = await listComments(pat, ctx.value.owner, ctx.value.repo, row.number)
+  if (res.code === 200) comments.value = res.data || []
+}
+
+async function toggleState(row: GitHubIssue) {
+  if (!ctx.value) return
+  const pat = await withPat()
+  const next = row.state === 'open' ? 'closed' : 'open'
+  const res = await setIssueState(pat, ctx.value.owner, ctx.value.repo, row.number, next)
+  if (res.code === 200) {
+    ElMessage.success(next === 'closed' ? 'Issue已关闭' : 'Issue已重新打开')
+    await logStore.write({ module: 'issue', action: next === 'closed' ? '关闭Issue' : '重新打开Issue', detail: `#${row.number} ${row.title}`, level: 'warning' })
+    detailVisible.value = false
+    loadIssues()
+  } else {
+    ElMessage.error(`操作失败：${res.msg}`)
+  }
+}
+
+async function submitComment() {
+  if (!ctx.value || !detail.value) return
+  if (!newComment.value.trim()) {
+    ElMessage.warning('请输入评论内容')
+    return
+  }
+  saving.value = true
+  const pat = await withPat()
+  const res = await commentIssue(pat, ctx.value.owner, ctx.value.repo, detail.value.number, newComment.value.trim())
+  saving.value = false
+  if (res.code === 200 || res.code === 201) {
+    ElMessage.success('评论已发布')
+    logStore.write({ module: 'issue', action: '评论Issue', detail: `#${detail.value.number} ${detail.value.title}` })
+    openDetail(detail.value)
+  } else {
+    ElMessage.error(`评论失败：${res.msg}`)
+  }
+}
+
+function openCreate() {
+  createForm.title = ''
+  createForm.body = ''
+  createForm.labels = ''
+  createVisible.value = true
+}
+
+async function submitCreate() {
+  if (!ctx.value) return
+  if (!createForm.title.trim()) {
+    ElMessage.warning('请输入标题')
+    return
+  }
+  saving.value = true
+  const pat = await withPat()
+  const labels = createForm.labels.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+  const res = await createIssue(pat, ctx.value.owner, ctx.value.repo, {
+    title: createForm.title.trim(),
+    body: createForm.body || undefined,
+    labels: labels.length ? labels : undefined
+  })
+  saving.value = false
+  if (res.code === 200 || res.code === 201) {
+    ElMessage.success('Issue已创建')
+    await logStore.write({ module: 'issue', action: '新建Issue', detail: `#${res.data?.number} ${createForm.title}`, level: 'success' })
+    createVisible.value = false
+    loadIssues()
+  } else {
+    ElMessage.error(`创建失败：${res.msg}`)
+  }
+}
+
+watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadIssues)
+onMounted(loadIssues)
+</script>
+
+<style scoped>
+.issue-title {
+  font-weight: 600;
+}
+.issue-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.tag-item {
+  margin-right: 4px;
+}
+.body-pre {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.sub-title {
+  font-weight: 600;
+  margin: 12px 0 8px;
+}
+.comment-item {
+  border-bottom: 1px dashed var(--border-color);
+  padding: 8px 0;
+}
+.comment-head {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.comment-body {
+  white-space: pre-wrap;
+  font-size: 13px;
+  margin: 6px 0 0;
+}
+</style>
