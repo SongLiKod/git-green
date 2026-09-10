@@ -9,6 +9,7 @@
     </div>
 
     <el-table :data="accountStore.accounts" border stripe>
+      <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
       <el-table-column label="GitHub账号" min-width="140">
         <template #default="{ row }">
           <div class="user-cell">
@@ -108,12 +109,15 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'AccountManage' })
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { GitHubAccount } from '@/api/githubAccount'
 
 const accountStore = useAccountStore()
+const settings = useSettingsStore()
 
 const fileInput = ref<HTMLInputElement>()
 const addVisible = ref(false)

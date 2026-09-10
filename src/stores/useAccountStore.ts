@@ -5,6 +5,7 @@ import * as accountApi from '@/api/githubAccount'
 import type { GitHubAccount, AccountStatus } from '@/api/githubAccount'
 import { decryptPAT } from '@/utils/crypto'
 import { textDownload } from '@/utils/platform'
+import { useLogStore } from './useLogStore'
 
 const ACTIVE_KEY = 'gitgreen_active_account'
 
@@ -13,6 +14,7 @@ const ACTIVE_KEY = 'gitgreen_active_account'
  * 所有账号凭证 AES-256-CBC 本地加密存储，多账号并行常驻、点击即切换、无登出操作。
  */
 export const useAccountStore = defineStore('account', () => {
+  const logStore = useLogStore()
   const accounts = ref<GitHubAccount[]>([])
   const activeId = ref<string>('')
   const checking = ref(false)
@@ -33,7 +35,12 @@ export const useAccountStore = defineStore('account', () => {
       ElMessage.warning('请先在账号管理中添加GitHub账号')
       return ''
     }
-    return await decryptPAT(acc.encryptedPat)
+    try {
+      return await decryptPAT(acc.encryptedPat)
+    } catch {
+      ElMessage.error('主密钥不可用：应用已锁定或凭证已失效，请解锁后重试')
+      return ''
+    }
   }
 
   function switchAccount(id: string) {
@@ -46,6 +53,7 @@ export const useAccountStore = defineStore('account', () => {
     if (res.code === 200) {
       reload()
       ElMessage.success('账号添加成功，已本地加密常驻')
+      await logStore.write({ module: 'account', action: '添加账号', detail: `绑定账号 ${res.data?.username}`, level: 'success' })
       return true
     }
     ElMessage.error(res.msg)
@@ -63,6 +71,7 @@ export const useAccountStore = defineStore('account', () => {
   }
 
   function deleteAccount(id: string) {
+    const acc = accounts.value.find(a => a.id === id)
     const res = accountApi.deleteAccount(id)
     if (res.code === 200) {
       if (activeId.value === id) {
@@ -71,6 +80,7 @@ export const useAccountStore = defineStore('account', () => {
       }
       reload()
       ElMessage.success('账号已删除')
+      logStore.write({ module: 'account', action: '删除账号', detail: `删除账号 ${acc?.username || id}`, level: 'warning' })
     } else {
       ElMessage.error(res.msg)
     }
@@ -121,6 +131,7 @@ export const useAccountStore = defineStore('account', () => {
     }
     textDownload(accountApi.exportAccounts(), `gitgreen-accounts-${Date.now()}.json`)
     ElMessage.success('账号配置已导出（PAT为AES密文）')
+    logStore.write({ module: 'account', action: '导出账号配置', detail: `导出 ${accounts.value.length} 个账号（AES密文）` })
   }
 
   /** 导入账号配置备份 */
@@ -129,6 +140,7 @@ export const useAccountStore = defineStore('account', () => {
     if (res.code === 200) {
       reload()
       ElMessage.success(res.msg)
+      await logStore.write({ module: 'account', action: '导入账号配置', detail: res.msg })
     } else {
       ElMessage.error(res.msg)
     }

@@ -45,6 +45,7 @@
             </div>
           </template>
           <el-table :data="displayRepos" border stripe v-loading="loading" max-height="480">
+            <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
             <el-table-column label="仓库" min-width="200">
               <template #default="{ row }">
                 <div class="repo-name">
@@ -142,16 +143,19 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'RepoList' })
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { GitHubRepo } from '@/api/githubRepo'
 import { getBranches } from '@/api/githubBranch'
 import { isWindowsClient } from '@/utils/platform'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
+const settings = useSettingsStore()
 const isWindows = isWindowsClient()
 
 const searchKw = ref('')

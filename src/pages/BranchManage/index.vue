@@ -13,6 +13,7 @@
           </div>
         </template>
         <el-table :data="branches" border stripe v-loading="loading" max-height="360">
+          <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="分支名" min-width="200">
             <template #default="{ row }">
               <span class="branch-name">{{ row.name }}</span>
@@ -105,11 +106,14 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'BranchManage' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useLogStore } from '@/stores/useLogStore'
 import {
   getBranches,
   createBranch,
@@ -124,6 +128,8 @@ import type { GitHubBranch, BranchCompareResult } from '@/api/githubBranch'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
+const settings = useSettingsStore()
+const logStore = useLogStore()
 
 const repo = computed(() => repoStore.currentRepo)
 const ctx = computed(() => repoStore.currentOwnerName())
@@ -186,6 +192,7 @@ async function submitCreate() {
   saving.value = false
   if (res.code === 200 || res.code === 201) {
     ElMessage.success(`分支 ${createForm.name} 创建成功`)
+    logStore.write({ module: 'branch', action: '创建分支', detail: `${ctx.value.owner}/${ctx.value.repo}：${createForm.from} → ${createForm.name}`, level: 'success' })
     createVisible.value = false
     loadBranches()
   } else {
@@ -208,6 +215,7 @@ async function onDelete(row: GitHubBranch) {
   const res = await deleteBranch(pat, ctx.value.owner, ctx.value.repo, row.name)
   if (res.code === 200 || res.code === 204) {
     ElMessage.success('分支已删除')
+    logStore.write({ module: 'branch', action: '删除分支', detail: `${ctx.value.owner}/${ctx.value.repo}：${row.name}`, level: 'warning' })
     loadBranches()
   } else {
     ElMessage.error(`删除失败：${res.msg}`)
@@ -241,6 +249,7 @@ async function openRename(row: GitHubBranch) {
   const res = await renameBranch(pat, ctx.value.owner, ctx.value.repo, row.name, newName, repo.value?.default_branch || '')
   if (res.code === 200 || res.code === 204) {
     ElMessage.success('分支重命名完成')
+    logStore.write({ module: 'branch', action: '重命名分支', detail: `${ctx.value.owner}/${ctx.value.repo}：${row.name} → ${newName}`, level: 'warning' })
     await repoStore.refreshCurrent()
     loadBranches()
   } else {
@@ -299,6 +308,7 @@ async function submitProtect() {
   saving.value = false
   if (res.code === 200) {
     ElMessage.success('保护规则已绑定')
+    logStore.write({ module: 'branch', action: '绑定保护规则', detail: `${ctx.value.owner}/${ctx.value.repo}:${protectTarget.value}`, level: 'warning' })
     protectVisible.value = false
     loadBranches()
   } else {
@@ -317,6 +327,7 @@ async function removeProtect() {
   const res = await deleteBranchProtection(pat, ctx.value.owner, ctx.value.repo, protectTarget.value)
   if (res.code === 200 || res.code === 204) {
     ElMessage.success('保护规则已移除')
+    logStore.write({ module: 'branch', action: '移除保护规则', detail: `${ctx.value.owner}/${ctx.value.repo}:${protectTarget.value}`, level: 'warning' })
     protectVisible.value = false
     loadBranches()
   } else {

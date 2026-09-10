@@ -11,8 +11,17 @@ export interface GitRunResult {
 }
 
 export interface ElectronAPI {
+  platform?: string
   /** 仅 Windows 客户端独有：通过 NodeJS 子进程调用本地 Git */
   gitExec: (args: string[], cwd?: string) => Promise<GitRunResult>
+  fs?: {
+    saveFile: (opts: { defaultPath?: string; content: string }) => Promise<string | null>
+    openFile: () => Promise<{ name: string; content: string } | null>
+    pickDirectory: () => Promise<string | null>
+  }
+  system?: {
+    getInfo: () => Promise<{ platform: string; versions: Record<string, string> }>
+  }
 }
 
 export interface AndroidBridge {

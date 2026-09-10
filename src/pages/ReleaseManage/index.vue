@@ -13,6 +13,7 @@
           </div>
         </template>
         <el-table :data="releases" border stripe v-loading="loading">
+          <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="版本" min-width="180">
             <template #default="{ row }">
               <span class="mono">{{ row.tag_name }}</span>
@@ -45,6 +46,7 @@
       <el-card shadow="never">
         <template #header>下载任务（软件内闭环下载，进度可视化）</template>
         <el-table :data="tasks" border size="small" max-height="240">
+          <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column prop="filename" label="文件" min-width="200" />
           <el-table-column label="进度" min-width="200">
             <template #default="{ row }">
@@ -125,15 +127,19 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'ReleaseManage' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useLogStore } from '@/stores/useLogStore'
 import * as releaseApi from '@/api/githubRelease'
 import type { Release, ReleaseAsset } from '@/api/githubRelease'
 import { auth } from '@/api/request'
 import { blobDownload, tryNativeDownload } from '@/utils/platform'
+import { saveDownload, listDownloads } from '@/utils/db'
 
 interface DownloadTask {
   id: string
@@ -144,6 +150,8 @@ interface DownloadTask {
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
+const settings = useSettingsStore()
+const logStore = useLogStore()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
@@ -230,6 +238,12 @@ async function submitForm() {
   saving.value = false
   if (res.code === 200 || res.code === 201) {
     ElMessage.success(editingId.value ? 'Release已更新' : 'Release已创建')
+    logStore.write({
+      module: 'release',
+      action: editingId.value ? '编辑Release' : '新建Release',
+      detail: `${ctx.value.owner}/${ctx.value.repo} ${form.tag_name}`,
+      level: 'success'
+    })
     formVisible.value = false
     loadReleases()
   } else {
@@ -252,6 +266,7 @@ async function onDelete(row: Release) {
   const res = await releaseApi.deleteRelease(pat, ctx.value.owner, ctx.value.repo, row.id)
   if (res.code === 204 || res.code === 200) {
     ElMessage.success('Release已删除')
+    await logStore.write({ module: 'release', action: '删除Release', detail: `${row.tag_name}`, level: 'warning' })
     loadReleases()
   } else {
     ElMessage.error(`删除失败：${res.msg}`)
@@ -291,13 +306,14 @@ async function startDownload(url: string, filename: string, totalHint: number) {
     task.percent = 100
     task.status = 'done'
     ElMessage.success('已加入原生下载队列（支持后台断点续传）')
-    saveTasks()
+    saveTask(task)
+    logStore.write({ module: 'release', action: '下载资源', detail: `${filename}（原生断点续传）`, level: 'success' })
     return
   }
   // Web/Windows：blob 流式下载，进度可视化
   const task = reactive<DownloadTask>({ id: `${Date.now()}`, filename, percent: 0, status: 'downloading' })
   tasks.value.unshift(task)
-  saveTasks()
+  saveTask(task)
   const res = await releaseApi.downloadWithProgress(pat, url, (loaded, total) => {
     task.percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : Math.min(99, Math.round((loaded / (totalHint || 1)) * 100))
   })
@@ -306,11 +322,13 @@ async function startDownload(url: string, filename: string, totalHint: number) {
     task.percent = 100
     task.status = 'done'
     ElMessage.success(`${filename} 下载完成（全程软件内闭环）`)
+    logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成`, level: 'success' })
   } else {
     task.status = 'error'
     ElMessage.error(`下载失败：${res.msg}`)
+    logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载失败：${res.msg}`, level: 'error' })
   }
-  saveTasks()
+  saveTask(task)
 }
 
 async function downloadAsset(asset: ReleaseAsset) {
@@ -321,46 +339,15 @@ async function downloadSource(url: string, filename: string) {
   await startDownload(url, filename, 0)
 }
 
-/* ---------- 下载任务持久化（IndexedDB） ---------- */
-const DB_NAME = 'gitgreen'
-const STORE = 'downloads'
-
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1)
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: 'id' })
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-async function saveTasks() {
-  try {
-    const db = await openDb()
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put({ id: 'history', tasks: tasks.value.slice(0, 50).map(t => ({ ...t })) })
-  } catch {
-    /* IndexedDB不可用时忽略 */
-  }
+/* ---------- 下载任务持久化（IndexedDB via utils/db） ---------- */
+function saveTask(task: DownloadTask) {
+  saveDownload({ id: task.id, filename: task.filename, percent: task.percent, status: task.status })
 }
 
 async function loadTasks() {
-  try {
-    const db = await openDb()
-    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get('history')
-    await new Promise<void>(resolve => {
-      req.onsuccess = () => {
-        const saved: DownloadTask[] = req.result?.tasks || []
-        tasks.value = saved.map(t => (t.status === 'downloading' ? { ...t, status: 'error' } : t))
-        resolve()
-      }
-      req.onerror = () => resolve()
-    })
-  } catch {
-    /* ignore */
-  }
+  tasks.value = (await listDownloads()).map(t =>
+    t.status === 'downloading' ? { ...t, status: 'error' as const } : { ...t }
+  )
 }
 
 watch(() => repoStore.currentRepoFullName, loadReleases)

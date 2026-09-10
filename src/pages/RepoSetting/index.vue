@@ -117,11 +117,13 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'RepoSetting' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
+import { useLogStore } from '@/stores/useLogStore'
 import * as repoApi from '@/api/githubRepo'
 import type { Collaborator } from '@/api/githubRepo'
 import { getBranches, getBranchProtection, saveBranchProtection, deleteBranchProtection } from '@/api/githubBranch'
@@ -129,6 +131,7 @@ import type { GitHubBranch } from '@/api/githubBranch'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
+const logStore = useLogStore()
 
 const repo = computed(() => repoStore.currentRepo)
 const saving = ref(false)
@@ -222,6 +225,7 @@ async function saveBasic() {
   saving.value = false
   if (res.code === 200) {
     ElMessage.success('仓库基本信息已更新')
+    logStore.write({ module: 'repo', action: '修改仓库信息', detail: `${r.full_name} → ${basic.name}`, level: 'success' })
     await repoStore.refreshCurrent()
   } else {
     ElMessage.error(`更新失败：${res.msg}`)
@@ -235,6 +239,7 @@ async function saveVisibility(v: boolean | string | number) {
   const res = await repoApi.updateRepoVisibility(pat, r.owner.login, r.name, !!v)
   if (res.code === 200) {
     ElMessage.success(`已切换为${v ? '私有' : '公开'}仓库`)
+    logStore.write({ module: 'repo', action: '切换可见性', detail: `${r.full_name} → ${v ? '私有' : '公开'}`, level: 'warning' })
     await repoStore.refreshCurrent()
   } else {
     ElMessage.error(`切换失败：${res.msg}`)
@@ -254,6 +259,7 @@ async function saveFeatures() {
   })
   if (res.code === 200) {
     ElMessage.success('功能配置已更新')
+    logStore.write({ module: 'repo', action: '更新功能开关', detail: `${r.full_name}：归档=${features.archived} Issues=${features.has_issues} Wiki=${features.has_wiki} Discussions=${features.has_discussions}` })
     await repoStore.refreshCurrent()
   } else {
     ElMessage.error(`更新失败：${res.msg}`)
@@ -269,6 +275,7 @@ async function saveDefaultBranch() {
   })
   if (res.code === 200) {
     ElMessage.success(`默认分支已切换为 ${features.default_branch}`)
+    logStore.write({ module: 'repo', action: '修改默认分支', detail: `${r.full_name} → ${features.default_branch}`, level: 'warning' })
     await repoStore.refreshCurrent()
   } else {
     ElMessage.error(`切换失败：${res.msg}`)
@@ -294,7 +301,10 @@ async function saveProtection() {
     restrictions: null
   })
   saving.value = false
-  if (res.code === 200) ElMessage.success(`分支 ${protectBranch.value} 保护规则已保存`)
+  if (res.code === 200) {
+    ElMessage.success(`分支 ${protectBranch.value} 保护规则已保存`)
+    logStore.write({ module: 'branch', action: '配置分支保护', detail: `${r.full_name}:${protectBranch.value}`, level: 'warning' })
+  }
   else ElMessage.error(`保存失败：${res.msg}`)
 }
 
@@ -308,7 +318,10 @@ async function removeProtection() {
   }
   const pat = await withPat()
   const res = await deleteBranchProtection(pat, r.owner.login, r.name, protectBranch.value)
-  if (res.code === 200) ElMessage.success('保护规则已移除')
+  if (res.code === 200) {
+    ElMessage.success('保护规则已移除')
+    logStore.write({ module: 'branch', action: '移除分支保护', detail: `${r.full_name}:${protectBranch.value}`, level: 'warning' })
+  }
   else ElMessage.error(`移除失败：${res.msg}`)
 }
 
@@ -335,6 +348,7 @@ async function addCollaborator() {
   saving.value = false
   if (res.code === 200 || res.code === 201) {
     ElMessage.success('协作者已添加（对方需接受邀请后生效）')
+    logStore.write({ module: 'repo', action: '添加协作者', detail: `${r.full_name} + ${newCollab.login}（${newCollab.permission}）`, level: 'warning' })
     newCollab.login = ''
     loadAll()
   } else {
@@ -354,6 +368,7 @@ async function removeCollaborator(c: Collaborator) {
   const res = await repoApi.removeCollaborator(pat, r.owner.login, r.name, c.login)
   if (res.code === 204 || res.code === 200) {
     ElMessage.success('协作者已移除')
+    logStore.write({ module: 'repo', action: '移除协作者', detail: `${r.full_name} - ${c.login}`, level: 'warning' })
     loadAll()
   } else {
     ElMessage.error(`移除失败：${res.msg}`)

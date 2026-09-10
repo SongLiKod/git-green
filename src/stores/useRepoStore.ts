@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import * as repoApi from '@/api/githubRepo'
 import type { GitHubRepo } from '@/api/githubRepo'
 import { useAccountStore } from './useAccountStore'
+import { useLogStore } from './useLogStore'
 
 export interface RepoMeta {
   favorite: boolean
@@ -27,6 +28,7 @@ function loadMeta(): Record<string, RepoMeta> {
  */
 export const useRepoStore = defineStore('repo', () => {
   const accountStore = useAccountStore()
+  const logStore = useLogStore()
 
   /** accountId -> repos */
   const reposByAccount = ref<Record<string, GitHubRepo[]>>({})
@@ -53,6 +55,11 @@ export const useRepoStore = defineStore('repo', () => {
 
   function persistMeta() {
     localStorage.setItem(META_KEY, JSON.stringify(metaMap.value))
+  }
+
+  /** 备份还原/重置后重新读取本地收藏分组 */
+  function reloadMeta() {
+    metaMap.value = loadMeta()
   }
 
   function getMeta(fullName: string): RepoMeta {
@@ -144,6 +151,7 @@ export const useRepoStore = defineStore('repo', () => {
     const res = await repoApi.createRepo(pat, payload)
     if (res.code === 200) {
       ElMessage.success('远程仓库创建成功')
+      await logStore.write({ module: 'repo', action: '新建远程仓库', detail: `创建仓库 ${payload.name}`, level: 'success' })
       await loadRepos(currentAccountId.value, true)
       return true
     }
@@ -158,6 +166,7 @@ export const useRepoStore = defineStore('repo', () => {
     const res = await repoApi.deleteRepo(pat, owner, repo)
     if (res.code === 200) {
       ElMessage.success('远程仓库已删除')
+      await logStore.write({ module: 'repo', action: '删除远程仓库', detail: `删除仓库 ${owner}/${repo}`, level: 'warning' })
       await loadRepos(currentAccountId.value, true)
       return true
     }
@@ -186,6 +195,7 @@ export const useRepoStore = defineStore('repo', () => {
     currentOwnerName,
     search,
     createRepo,
-    deleteRepo
+    deleteRepo,
+    reloadMeta
   }
 })

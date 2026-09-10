@@ -26,6 +26,7 @@
         </el-breadcrumb>
 
         <el-table :data="entries" border stripe v-loading="loading" @row-dblclick="openEntry">
+          <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="名称" min-width="260">
             <template #default="{ row }">
               <span :class="row.type === 'dir' ? 'dir-name' : 'file-name'" @click="openEntry(row)">
@@ -78,17 +79,22 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'FileManager' })
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useLogStore } from '@/stores/useLogStore'
 import { getFileTree, getFileContent, saveFile, deleteFile } from '@/api/githubFile'
 import type { FileEntry } from '@/api/githubFile'
 import { getBranches } from '@/api/githubBranch'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
+const settings = useSettingsStore()
+const logStore = useLogStore()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const entries = ref<FileEntry[]>([])
@@ -229,6 +235,12 @@ async function submitSave() {
   saving.value = false
   if (res.code === 200) {
     ElMessage.success('已直接提交到 GitHub 远程仓库')
+    logStore.write({
+      module: 'file',
+      action: isNewFile.value ? '新增文件' : '编辑文件',
+      detail: `${ctx.value.owner}/${ctx.value.repo}:${branch.value} ${path}`,
+      level: 'warning'
+    })
     previewVisible.value = false
     editing.value = false
     loadDir(currentPath.value)
@@ -252,6 +264,7 @@ async function removeFile(row: FileEntry) {
   const res = await deleteFile(pat, ctx.value.owner, ctx.value.repo, row.path, row.sha, `Delete ${row.path}`, branch.value)
   if (res.code === 200) {
     ElMessage.success('文件已删除并提交')
+    logStore.write({ module: 'file', action: '删除文件', detail: `${ctx.value.owner}/${ctx.value.repo}:${branch.value} ${row.path}`, level: 'warning' })
     loadDir(currentPath.value)
   } else {
     ElMessage.error(`删除失败：${res.msg}`)

@@ -2,7 +2,7 @@
  * GitGreen Windows 客户端（Electron 主进程）
  * 包含全部远程功能 + 本地Git能力（NodeJS 子进程调用 Git）
  */
-const { app, BrowserWindow, ipcMain, protocol, net, session } = require('electron')
+const { app, BrowserWindow, ipcMain, protocol, net, session, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { spawn } = require('child_process')
@@ -28,6 +28,39 @@ ipcMain.handle('git:exec', async (_event, payload) => {
   const cwd = payload && payload.cwd ? String(payload.cwd) : undefined
   return await runGit(args, cwd)
 })
+
+/* 备份文件保存 / 打开 / 目录选择 / 系统信息 */
+ipcMain.handle('fs:saveFile', async (event, payload) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: payload.defaultPath || 'gitgreen-backup.json',
+    filters: [{ name: 'JSON 备份', extensions: ['json'] }]
+  })
+  if (canceled || !filePath) return null
+  fs.writeFileSync(filePath, String(payload.content || ''), 'utf-8')
+  return filePath
+})
+
+ipcMain.handle('fs:openFile', async event => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    filters: [{ name: 'JSON 备份', extensions: ['json'] }],
+    properties: ['openFile']
+  })
+  if (canceled || filePaths.length === 0) return null
+  return { name: path.basename(filePaths[0]), content: fs.readFileSync(filePaths[0], 'utf-8') }
+})
+
+ipcMain.handle('fs:pickDirectory', async event => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+  return canceled || filePaths.length === 0 ? null : filePaths[0]
+})
+
+ipcMain.handle('system:getInfo', () => ({
+  platform: process.platform,
+  versions: process.versions
+}))
 
 // 注册特权 scheme：ES Module / fetch / 安全上下文（crypto.subtle 需要安全上下文）
 protocol.registerSchemesAsPrivileged([

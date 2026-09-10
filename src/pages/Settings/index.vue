@@ -1,0 +1,715 @@
+﻿<template>
+  <div class="page settings-page">
+    <!-- 外观主题 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Sunny /></el-icon>外观主题<span class="sub">{{ themeHint }}</span></div>
+      <el-radio-group :model-value="themeStore.themeMode" class="theme-radio" @update:model-value="onThemeModeChange">
+        <el-radio-button value="system">跟随系统</el-radio-button>
+        <el-radio-button value="light">浅色模式</el-radio-button>
+        <el-radio-button value="dark">深色模式</el-radio-button>
+      </el-radio-group>
+    </div>
+
+    <!-- 页面打开方式（桌面端） -->
+    <div v-if="isDesktop" class="settings-group">
+      <div class="settings-group__title"><el-icon><Grid /></el-icon>页面打开方式</div>
+      <el-radio-group :model-value="config.pageMode" class="theme-radio" @update:model-value="onPageModeChange">
+        <el-radio-button value="single">单页显示</el-radio-button>
+        <el-radio-button value="multi">多标签页</el-radio-button>
+      </el-radio-group>
+      <p class="desc">多标签页：顶栏显示页签栏，可同时打开多个页面并保留各自状态，关闭页签自动切换相邻页签，重启后恢复上次打开的页签。</p>
+    </div>
+
+    <!-- 通用 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Setting /></el-icon>通用</div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>自动同步仓库列表</span><span class="desc">定期刷新各账号的仓库数据</span></div>
+        <el-switch :model-value="config.autoSyncEnabled" @change="(v: any) => settings.update({ autoSyncEnabled: !!v })" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>同步周期</span><span class="desc">间隔太短可能触发 GitHub API 限流</span></div>
+        <el-select :model-value="config.syncInterval" style="width: 140px" @update:model-value="(v: any) => settings.update({ syncInterval: v as SyncIntervalMinutes })">
+          <el-option v-for="m in SYNC_INTERVAL_OPTIONS" :key="m" :label="`${m} 分钟`" :value="m" />
+        </el-select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>日志保留天数</span><span class="desc">超过该天数的操作日志将被自动清理</span></div>
+        <el-input-number :model-value="config.logRetentionDays" :min="7" :max="3650" @update:model-value="(v: any) => settings.update({ logRetentionDays: v || 90 })" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>列表显示序号</span><span class="desc">在各列表首列显示行号（仓库 / 分支 / Action / Release / 文件 / 日志）</span></div>
+        <el-switch :model-value="config.showRowIndex" @change="(v: any) => settings.update({ showRowIndex: !!v })" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>左侧菜单默认折叠</span><span class="desc">下次打开页面生效</span></div>
+        <el-switch :model-value="config.menuCollapsed" @change="(v: any) => settings.update({ menuCollapsed: !!v })" />
+      </div>
+    </div>
+
+    <!-- 健康巡检 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Monitor /></el-icon>健康巡检</div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>启用定时巡检</span><span class="desc">定期检测各账号 Token 状态（正常/过期/失效），异常自动弹窗提醒</span></div>
+        <el-switch :model-value="config.inspectionEnabled" @change="(v: any) => settings.update({ inspectionEnabled: !!v })" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>巡检间隔（分钟）</span><span class="desc">建议不小于 30 分钟，避免限流</span></div>
+        <el-input-number :model-value="config.inspectionIntervalMinutes" :min="10" :max="1440" :step="10" @update:model-value="(v: any) => settings.update({ inspectionIntervalMinutes: v || 30 })" />
+      </div>
+    </div>
+
+    <!-- 请求性能 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Odometer /></el-icon>请求性能</div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>最大并发数</span><span class="desc">批量操作与资源刷新的并发上限，过高易触发限流</span></div>
+        <el-input-number :model-value="config.concurrencyLimit" :min="1" :max="16" @update:model-value="(v: any) => settings.update({ concurrencyLimit: v || 4 })" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>请求超时（秒）</span><span class="desc">单次 API 请求超时时间</span></div>
+        <el-input-number :model-value="config.requestTimeout" :min="5" :max="120" @update:model-value="(v: any) => settings.update({ requestTimeout: v || 30 })" />
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>失败重试次数</span><span class="desc">指数退避重试，限流（403/429）与网络错误时生效</span></div>
+        <el-input-number :model-value="config.retryTimes" :min="0" :max="5" @update:model-value="(v: any) => settings.update({ retryTimes: v ?? 0 })" />
+      </div>
+    </div>
+
+    <!-- 数据备份 / 还原 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Files /></el-icon>数据备份 / 还原<span class="sub">账号密钥使用 AES-256-CBC 加密存储</span></div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>导出备份</span><span class="desc">包含账号、收藏分组、设置、下载记录与操作日志</span></div>
+        <div class="setting-row__action">
+          <el-checkbox v-model="backupIncludeCredentials">包含密钥</el-checkbox>
+          <el-button type="primary" :loading="backuping" @click="doBackup">导出</el-button>
+        </div>
+      </div>
+      <div v-if="isDesktop" class="setting-row">
+        <div class="setting-row__label"><span>默认备份目录</span><span class="desc">{{ config.backupPath || '未设置（弹出保存对话框）' }}</span></div>
+        <el-button @click="pickBackupPath">选择目录</el-button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>还原备份</span><span class="desc">不含密钥的备份仅能还原账号结构，凭据需重新填写</span></div>
+        <div class="setting-row__action">
+          <el-checkbox v-model="restoreIncludeCredentials">导入密钥</el-checkbox>
+          <el-checkbox v-model="restoreOverwriteLogs">覆盖日志</el-checkbox>
+          <el-button :loading="restoring" @click="doRestore">选择文件还原</el-button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 安全与锁定 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Lock /></el-icon>安全与锁定<span class="sub">应用锁 · 口令加固 · 自动锁定</span></div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>启用应用锁</span><span class="desc">启动与回到前台时需输入口令</span></div>
+        <el-switch :model-value="lockState.enabled" @change="onToggleLock" />
+      </div>
+      <template v-if="lockState.enabled">
+        <div class="setting-row">
+          <div class="setting-row__label"><span>{{ lockState.pinSet ? '修改口令' : '设置口令' }}</span><span class="desc">口令至少 4 位，请务必牢记</span></div>
+          <el-button @click="openPinDialog">{{ lockState.pinSet ? '修改' : '设置' }}</el-button>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>口令加固主密钥</span><span class="desc">锁定时用口令加密主密钥、无法解密数据；忘记口令将无法恢复，建议先备份</span></div>
+          <el-switch :model-value="lockState.hardenMasterKey" :loading="hardenSaving" @change="onToggleHarden" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>自动锁定（空闲）</span></div>
+          <el-select :model-value="lockState.autoLockIdleMinutes" style="width: 130px" @change="onIdleChange">
+            <el-option label="关闭" :value="0" />
+            <el-option label="1 分钟" :value="1" />
+            <el-option label="5 分钟" :value="5" />
+            <el-option label="15 分钟" :value="15" />
+            <el-option label="30 分钟" :value="30" />
+          </el-select>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>后台 / 失焦自动锁定</span><span class="desc">切到后台或窗口失焦时立即锁定</span></div>
+          <el-switch :model-value="lockState.autoLockOnBackground" @change="(v: any) => updateLockRules({ autoLockOnBackground: !!v })" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>失败次数限制</span></div>
+          <el-input-number :model-value="lockState.failLimit" :min="1" :max="10" @change="(v: any) => updateLockRules({ failLimit: v || 5 })" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>冷却时间（秒）</span></div>
+          <el-input-number :model-value="lockState.cooldownSeconds" :min="5" :max="600" @change="(v: any) => updateLockRules({ cooldownSeconds: v || 30 })" />
+        </div>
+      </template>
+    </div>
+
+    <!-- 邮箱提醒（口令备份） -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><Message /></el-icon>邮箱提醒（口令备份）<span class="sub">设置口令时可发送提醒到指定邮箱</span></div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>启用邮件提醒</span><span class="desc">设置/修改口令时自动发送提醒邮件（EmailJS，用户显式触发）</span></div>
+        <el-switch :model-value="email.enabled" @change="onEmailEnabled" />
+      </div>
+      <template v-if="email.enabled">
+        <div class="setting-row">
+          <div class="setting-row__label"><span>收件邮箱</span><span class="desc">支持 QQ / Outlook / Gmail 等任意邮箱</span></div>
+          <el-input v-model="email.recipient" placeholder="例如 name@qq.com" style="width: 240px" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>EmailJS Service ID</span><span class="desc">emailjs.com 控制台创建 Service 得到</span></div>
+          <el-input v-model="email.serviceId" placeholder="service_xxxxxxxx" style="width: 240px" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>EmailJS Template ID</span><span class="desc">emailjs.com 控制台创建的模板</span></div>
+          <el-input v-model="email.templateId" placeholder="template_xxxxxxxx" style="width: 240px" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>模板变量名：收件人 / 主题 / 正文</span><span class="desc">需与模板中的变量保持一致（默认 to_email / subject / message）</span></div>
+          <div class="row-flex">
+            <el-input v-model="email.paramTo" placeholder="to_email" style="width: 120px" />
+            <el-input v-model="email.paramSubject" placeholder="subject" style="width: 120px" />
+            <el-input v-model="email.paramMessage" placeholder="message" style="width: 120px" />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>EmailJS Public Key</span><span class="desc">公开密钥，非敏感</span></div>
+          <el-input v-model="email.publicKey" placeholder="xxxxxxxx" style="width: 240px" />
+        </div>
+        <div class="setting-row">
+          <div class="setting-row__label"><span>操作</span></div>
+          <div class="setting-row__action">
+            <el-button :loading="emailSaving" @click="saveEmail">保存</el-button>
+            <el-button :loading="emailTesting" @click="testEmail">发送测试邮件</el-button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 危险操作 -->
+    <div class="settings-group settings-group--danger">
+      <div class="settings-group__title"><el-icon><WarningFilled /></el-icon>危险操作</div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>重置资源数据（保留账号）</span><span class="desc">清除仓库缓存、收藏分组、下载记录与操作日志，保留账号与设置，便于重新同步</span></div>
+        <el-button type="warning" plain :loading="resetting" @click="doResetData">重置</el-button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-row__label"><span>清空全部本地数据</span><span class="desc">删除所有账号、加密凭证、缓存、日志与设置，且无法恢复</span></div>
+        <el-button type="danger" plain :loading="wiping" @click="doWipe">清空数据</el-button>
+      </div>
+    </div>
+
+    <!-- 关于 -->
+    <div class="settings-group">
+      <div class="settings-group__title"><el-icon><InfoFilled /></el-icon>关于</div>
+      <div class="about-grid">
+        <div class="about-item"><span>应用</span><b>GitGreen</b></div>
+        <div class="about-item"><span>版本</span><b>v1.0.0</b></div>
+        <div class="about-item"><span>运行环境</span><b>{{ runtimeLabel }}</b></div>
+        <div class="about-item" v-if="isDesktop"><span>Electron</span><b>{{ electronVersions?.electron ?? '未知' }}</b></div>
+        <div class="about-item"><span>数据存储</span><b>LocalStorage + IndexedDB（本机私有化）</b></div>
+        <div class="about-item"><span>凭证加密</span><b>Web Crypto AES-256-CBC</b></div>
+      </div>
+    </div>
+
+    <!-- 设置 / 修改口令 -->
+    <el-dialog v-model="pinDialogVisible" :title="lockState.pinSet ? '修改口令' : '设置口令'" width="420px" append-to-body @close="pinDialogVisible = false">
+      <el-form label-width="70px" label-position="left">
+        <el-form-item v-if="lockState.pinSet" label="原口令">
+          <el-input v-model="pinForm.old" type="password" show-password placeholder="输入当前口令" />
+        </el-form-item>
+        <el-form-item label="新口令">
+          <el-input v-model="pinForm.next" type="password" show-password placeholder="至少 4 位" />
+        </el-form-item>
+        <el-form-item label="确认口令">
+          <el-input v-model="pinForm.confirm" type="password" show-password placeholder="再次输入新口令" @keyup.enter="savePin" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pinDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="pinSaving" @click="savePin">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <input ref="fileInput" type="file" accept=".json,application/json" style="display: none" @change="onRestoreFile" />
+  </div>
+</template>
+
+<script setup lang="ts">
+defineOptions({ name: 'Settings' })
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Files, Grid, InfoFilled, Lock, Message, Monitor, Odometer, Setting, Sunny, WarningFilled } from '@element-plus/icons-vue'
+import { useThemeStore } from '@/stores/useThemeStore'
+import { useSettingsStore, SYNC_INTERVAL_OPTIONS } from '@/stores/useSettingsStore'
+import type { SyncIntervalMinutes, PageMode } from '@/stores/useSettingsStore'
+import { useAccountStore } from '@/stores/useAccountStore'
+import { useRepoStore } from '@/stores/useRepoStore'
+import { useLogStore } from '@/stores/useLogStore'
+import { createBackup, restoreBackup, clearAllExceptAccounts, wipeAllData } from '@/utils/db'
+import { lockState, enableLock, disableLock, changePin, setHardenMasterKey, updateLockRules, confirmPin } from '@/utils/lockService'
+import { getEmailSettings, saveEmailSettings, sendEmail, sendPinReminder, type EmailSettings } from '@/utils/emailService'
+import { getPlatform, isWindowsClient, textDownload } from '@/utils/platform'
+import type { ThemeMode } from '@/stores/useThemeStore'
+import type { BackupPayload } from '@/utils/db'
+
+const themeStore = useThemeStore()
+const settings = useSettingsStore()
+const accountStore = useAccountStore()
+const repoStore = useRepoStore()
+const logStore = useLogStore()
+
+const config = computed(() => settings.config)
+const isDesktop = isWindowsClient()
+
+const themeHint = computed(() =>
+  themeStore.themeMode === 'system' ? '跟随系统' : themeStore.themeMode === 'dark' ? '深色' : '浅色'
+)
+
+function onThemeModeChange(mode: string | number | boolean | undefined) {
+  const value = (mode ?? 'system') as ThemeMode
+  themeStore.setThemeMode(value)
+  settings.update({ themeMode: value })
+}
+
+function onPageModeChange(mode: string | number | boolean | undefined) {
+  const value = (mode ?? 'single') as PageMode
+  if (value === config.value.pageMode) return
+  settings.update({ pageMode: value })
+  logStore.write({
+    module: 'settings',
+    action: value === 'multi' ? '开启多标签页' : '切换为单页模式',
+    detail: `页面打开方式切换为${value === 'multi' ? '多标签页' : '单页显示'}`
+  })
+}
+
+/* ---------------- 备份 / 还原 ---------------- */
+const backupIncludeCredentials = ref(true)
+const restoreIncludeCredentials = ref(true)
+const restoreOverwriteLogs = ref(false)
+const backuping = ref(false)
+const restoring = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+async function doBackup() {
+  backuping.value = true
+  try {
+    let pin: string | undefined
+    if (backupIncludeCredentials.value && lockState.pinSet) {
+      let ok = false
+      let pinInput = ''
+      try {
+        const r = await ElMessageBox.prompt('导出含密钥的备份需验证口令', '安全确认', {
+          type: 'warning',
+          confirmButtonText: '确认导出',
+          cancelButtonText: '取消',
+          inputType: 'password',
+          inputPlaceholder: '输入当前口令'
+        })
+        pinInput = String(r.value)
+        ok = await confirmPin(pinInput)
+      } catch {
+        return
+      }
+      if (!ok) {
+        ElMessage.error('口令错误，已取消导出')
+        return
+      }
+      pin = pinInput
+    }
+    const payload = await createBackup(backupIncludeCredentials.value, pin)
+    const filename = `gitgreen-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`
+    const content = JSON.stringify(payload, null, 2)
+    if (isDesktop && window.electronAPI?.fs) {
+      const saved = await window.electronAPI.fs.saveFile({
+        defaultPath: config.value.backupPath ? `${config.value.backupPath}\\${filename}` : filename,
+        content
+      })
+      if (saved) {
+        ElMessage.success(`备份已导出：${saved}`)
+      } else {
+        return
+      }
+    } else {
+      textDownload(content, filename)
+      ElMessage.success('备份已导出')
+    }
+    await logStore.write({
+      module: 'backup',
+      action: '导出备份',
+      detail: `导出备份${backupIncludeCredentials.value ? '（含密钥）' : '（不含密钥）'}`
+    })
+  } catch (e: any) {
+    ElMessage.error(String(e?.message || e))
+  } finally {
+    backuping.value = false
+  }
+}
+
+async function doRestore() {
+  if (isDesktop && window.electronAPI?.fs) {
+    const file = await window.electronAPI.fs.openFile()
+    if (file) await applyRestore(file.content)
+  } else {
+    fileInput.value?.click()
+  }
+}
+
+async function onRestoreFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const content = await file.text()
+  input.value = ''
+  await applyRestore(content)
+}
+
+async function applyRestore(content: string) {
+  restoring.value = true
+  try {
+    const payload = JSON.parse(content) as BackupPayload
+    const result = await restoreBackup(payload, {
+      includeCredentials: restoreIncludeCredentials.value,
+      overwriteLogs: restoreOverwriteLogs.value
+    })
+    accountStore.reload()
+    repoStore.reloadMeta()
+    settings.init()
+    let msg = `还原成功：账号 ${result.accounts} / 分组收藏 ${result.meta} / 下载记录 ${result.downloads} / 日志 ${result.logs}`
+    if (result.successAccounts.length) msg += `\n✓ 密钥可用：${result.successAccounts.join('、')}`
+    if (result.failedAccounts.length) msg += `\n✗ 密钥失败（需重新填写PAT）：${result.failedAccounts.join('、')}`
+    if (result.failedAccounts.length) {
+      ElMessageBox.alert(msg, '还原完成（部分账号密钥失败）', { type: 'warning' })
+    } else {
+      ElMessage.success(msg)
+    }
+    await logStore.write({
+      module: 'backup',
+      action: '还原备份',
+      detail: `从备份还原：账号 ${result.accounts}，密钥成功 ${result.successAccounts.length}，失败 ${result.failedAccounts.length}`,
+      level: result.failedAccounts.length ? 'warning' : 'success'
+    })
+  } catch (e: any) {
+    ElMessage.error(String(e?.message || e))
+  } finally {
+    restoring.value = false
+  }
+}
+
+async function pickBackupPath() {
+  if (!window.electronAPI?.fs) return
+  const path = await window.electronAPI.fs.pickDirectory()
+  if (path) {
+    settings.update({ backupPath: path })
+    ElMessage.success(`备份目录已设置为：${path}`)
+  }
+}
+
+/* ---------------- 安全与锁定 ---------------- */
+const pinDialogVisible = ref(false)
+const pinSaving = ref(false)
+const hardenSaving = ref(false)
+const pinForm = reactive({ old: '', next: '', confirm: '' })
+
+function openPinDialog() {
+  pinForm.old = ''
+  pinForm.next = ''
+  pinForm.confirm = ''
+  pinDialogVisible.value = true
+}
+
+async function onToggleLock(value: string | number | boolean) {
+  if (value) {
+    openPinDialog()
+    return
+  }
+  try {
+    const r = await ElMessageBox.prompt('请输入当前口令以关闭应用锁', '关闭应用锁', {
+      type: 'warning',
+      confirmButtonText: '关闭',
+      cancelButtonText: '取消',
+      inputType: 'password',
+      inputPlaceholder: '输入当前口令'
+    })
+    await disableLock(String(r.value))
+    ElMessage.success('应用锁已关闭')
+    await logStore.write({ module: 'lock', action: '关闭应用锁', detail: '关闭了应用锁', level: 'warning' })
+  } catch (e: any) {
+    if (e !== 'cancel' && typeof e === 'object' && e?.message) ElMessage.error(String(e.message))
+  }
+}
+
+async function savePin() {
+  const next = pinForm.next.trim()
+  if (next.length < 4) {
+    ElMessage.warning('口令至少 4 位')
+    return
+  }
+  if (next !== pinForm.confirm) {
+    ElMessage.warning('两次输入的口令不一致')
+    return
+  }
+  pinSaving.value = true
+  try {
+    if (lockState.pinSet) {
+      await changePin(pinForm.old, next)
+      ElMessage.success('口令已更新')
+      await logStore.write({ module: 'lock', action: '修改口令', detail: '修改了应用锁口令' })
+    } else {
+      await enableLock(next)
+      ElMessage.success('应用锁已启用')
+      await logStore.write({ module: 'lock', action: '启用应用锁', detail: '启用了应用锁', level: 'warning' })
+    }
+    pinDialogVisible.value = false
+    if (email.value.enabled) {
+      try {
+        await sendPinReminder(next)
+        ElMessage.success('口令提醒邮件已发送')
+        await logStore.write({ module: 'lock', action: '发送口令提醒邮件', detail: `已发送到 ${email.value.recipient}` })
+      } catch (e: any) {
+        ElMessage.warning(`口令已设置，但提醒邮件发送失败：${e?.message || e}`)
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error(String(e?.message || e))
+  } finally {
+    pinSaving.value = false
+  }
+}
+
+async function onToggleHarden(value: string | number | boolean) {
+  const enable = !!value
+  try {
+    if (enable) {
+      await ElMessageBox.confirm(
+        '开启后，锁定时将以口令加密主密钥、无法解密任何数据；若忘记口令，本机加密数据将无法恢复（建议先导出含密钥备份）。确认开启？',
+        '口令加固确认',
+        { type: 'warning', confirmButtonText: '开启', cancelButtonText: '取消' }
+      )
+    }
+    const r = await ElMessageBox.prompt('请输入当前口令', enable ? '开启口令加固' : '关闭口令加固', {
+      type: 'warning',
+      inputType: 'password',
+      inputPlaceholder: '输入当前口令',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消'
+    })
+    hardenSaving.value = true
+    await setHardenMasterKey(enable, String(r.value))
+    ElMessage.success(enable ? '已开启口令加固' : '已关闭口令加固')
+    await logStore.write({
+      module: 'lock',
+      action: enable ? '开启口令加固' : '关闭口令加固',
+      detail: enable ? '锁定时主密钥需口令解包' : '主密钥恢复设备自动解包',
+      level: 'warning'
+    })
+  } catch {
+    /* 用户取消 */
+  } finally {
+    hardenSaving.value = false
+  }
+}
+
+function onIdleChange(value: number) {
+  updateLockRules({ autoLockIdleMinutes: Number(value) || 0 })
+}
+
+/* ---------------- 邮箱提醒 ---------------- */
+const email = ref<EmailSettings>({ ...getEmailSettings() })
+const emailSaving = ref(false)
+const emailTesting = ref(false)
+
+async function onEmailEnabled(value: string | number | boolean) {
+  email.value = saveEmailSettings({ enabled: !!value })
+}
+
+async function saveEmail() {
+  emailSaving.value = true
+  try {
+    email.value = saveEmailSettings({
+      recipient: email.value.recipient.trim(),
+      serviceId: email.value.serviceId.trim(),
+      templateId: email.value.templateId.trim(),
+      publicKey: email.value.publicKey.trim(),
+      paramTo: email.value.paramTo.trim() || 'to_email',
+      paramSubject: email.value.paramSubject.trim() || 'subject',
+      paramMessage: email.value.paramMessage.trim() || 'message'
+    })
+    ElMessage.success('邮件提醒配置已保存')
+    await logStore.write({
+      module: 'settings',
+      action: '保存邮箱提醒配置',
+      detail: `收件邮箱：${email.value.recipient || '未设置'}`
+    })
+  } finally {
+    emailSaving.value = false
+  }
+}
+
+async function testEmail() {
+  emailTesting.value = true
+  try {
+    await saveEmail()
+    await sendEmail('GitGreen 测试邮件', '这是一封来自 GitGreen 的测试邮件。')
+    ElMessage.success('测试邮件已发送，请查收')
+    await logStore.write({ module: 'settings', action: '发送测试邮件', detail: `已发送到 ${email.value.recipient}` })
+  } catch (e: any) {
+    ElMessage.error(String(e?.message || e))
+  } finally {
+    emailTesting.value = false
+  }
+}
+
+/* ---------------- 危险操作 ---------------- */
+const wiping = ref(false)
+const resetting = ref(false)
+
+async function doResetData() {
+  try {
+    await ElMessageBox.confirm(
+      '将清除除账号与设置外的全部本地数据（仓库缓存、收藏分组、下载记录、操作日志），之后需重新同步仓库。请输入「重置」以确认。',
+      '重置数据确认',
+      {
+        type: 'warning',
+        confirmButtonText: '重置数据',
+        cancelButtonText: '取消',
+        inputValidator: v => v === '重置' || '请输入「重置」确认',
+        inputPlaceholder: '输入「重置」'
+      }
+    )
+  } catch {
+    return
+  }
+  resetting.value = true
+  await clearAllExceptAccounts()
+  repoStore.reposByAccount = {}
+  repoStore.reloadMeta()
+  await logStore.write({ module: 'system', action: '重置资源数据', detail: '清除了除账号与设置外的本地数据', level: 'warning' })
+  ElMessage.success('已清除资源数据，可在仓库页重新加载')
+  resetting.value = false
+}
+
+async function doWipe() {
+  try {
+    await ElMessageBox.confirm(
+      '此操作将删除本机全部数据（账号、加密凭证、缓存、日志、设置），且无法恢复！请输入「清空」以确认。',
+      '危险操作确认',
+      {
+        type: 'error',
+        confirmButtonText: '清空全部数据',
+        cancelButtonText: '取消',
+        inputValidator: v => v === '清空' || '请输入「清空」确认',
+        inputPlaceholder: '输入「清空」'
+      }
+    )
+  } catch {
+    return
+  }
+  wiping.value = true
+  await wipeAllData()
+  ElMessage.warning('本机数据已全部清空，即将刷新')
+  setTimeout(() => location.reload(), 600)
+}
+
+/* ---------------- 关于 ---------------- */
+const runtimeLabel = computed(() => {
+  const p = getPlatform()
+  return p === 'windows' ? 'Electron（Windows桌面端）' : p === 'android' ? 'Android（WebView）' : 'Web 浏览器'
+})
+const electronVersions = ref<{ electron?: string } | null>(null)
+
+onMounted(async () => {
+  settings.init()
+  if (isDesktop && window.electronAPI?.system) {
+    const info = await window.electronAPI.system.getInfo().catch(() => null)
+    electronVersions.value = (info?.versions as { electron?: string } | undefined) ?? null
+  }
+})
+</script>
+
+<style scoped>
+.settings-page {
+  max-width: 860px;
+}
+.settings-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 16px 18px;
+}
+.settings-group--danger {
+  border-color: #f56c6c;
+}
+.settings-group__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-group__title .sub {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.theme-radio :deep(.el-radio-button__inner) {
+  min-width: 110px;
+  justify-content: center;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--border-color);
+}
+.setting-row:last-child {
+  border-bottom: none;
+}
+.setting-row__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+}
+.setting-row__action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.row-flex {
+  display: flex;
+  gap: 8px;
+}
+.desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 12px 0 0;
+}
+.about-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.about-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+}
+.about-item span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.about-item b {
+  font-size: 13px;
+  word-break: break-all;
+}
+</style>

@@ -10,7 +10,9 @@ const router = createRouter({
     { path: '/branch', name: 'BranchManage', component: () => import('@/pages/BranchManage/index.vue'), meta: { title: '分支管理' } },
     { path: '/action', name: 'ActionManage', component: () => import('@/pages/ActionManage/index.vue'), meta: { title: 'Action流水线' } },
     { path: '/release', name: 'ReleaseManage', component: () => import('@/pages/ReleaseManage/index.vue'), meta: { title: 'Release管理' } },
-    { path: '/file', name: 'FileManager', component: () => import('@/pages/FileManager/index.vue'), meta: { title: '文件管理' } }
+    { path: '/file', name: 'FileManager', component: () => import('@/pages/FileManager/index.vue'), meta: { title: '文件管理' } },
+    { path: '/log', name: 'LogManage', component: () => import('@/pages/LogManage/index.vue'), meta: { title: '操作日志' } },
+    { path: '/settings', name: 'Settings', component: () => import('@/pages/Settings/index.vue'), meta: { title: '设置' } }
   ]
 })
 

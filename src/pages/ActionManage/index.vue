@@ -5,6 +5,7 @@
       <el-tabs v-model="tab" class="action-tabs">
         <el-tab-pane label="Workflow工作流" name="workflows">
           <el-table :data="workflows" border stripe v-loading="loading">
+            <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
             <el-table-column prop="name" label="工作流名称" min-width="160" />
             <el-table-column prop="path" label="文件路径" min-width="220">
               <template #default="{ row }"><span class="mono">{{ row.path }}</span></template>
@@ -35,6 +36,7 @@
             <el-checkbox v-model="autoRefresh">自动刷新（运行中实时状态）</el-checkbox>
           </div>
           <el-table :data="runs" border stripe v-loading="runsLoading">
+            <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
             <el-table-column label="运行" min-width="200">
               <template #default="{ row }">
                 <span class="mono">#{{ row.run_number }}</span> {{ row.display_title || row.name }}
@@ -100,11 +102,14 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'ActionManage' })
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import RepoContextBar from '@/components/RepoContextBar.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useLogStore } from '@/stores/useLogStore'
 import {
   listWorkflows,
   listRuns,
@@ -121,6 +126,8 @@ import { base64ToUtf8 } from '@/utils/crypto'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
+const settings = useSettingsStore()
+const logStore = useLogStore()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const tab = ref('workflows')
@@ -215,6 +222,7 @@ async function submitTrigger() {
   saving.value = false
   if (res.code === 200 || res.code === 202) {
     ElMessage.success('流水线已触发（若失败请确认该Workflow是否支持 workflow_dispatch 事件）')
+    logStore.write({ module: 'action', action: '触发流水线', detail: `${triggerTarget.value.name} @ ${triggerRef.value}`, level: 'warning' })
     triggerVisible.value = false
     tab.value = 'runs'
     loadRuns()
@@ -234,6 +242,7 @@ async function cancel(row: WorkflowRun) {
   const res = await cancelRun(pat, ctx.value.owner, ctx.value.repo, row.id)
   if (res.code === 202) {
     ElMessage.success('已提交取消请求')
+    logStore.write({ module: 'action', action: '取消流水线', detail: `#${row.run_number} ${row.display_title || row.name}`, level: 'warning' })
     loadRuns()
   } else {
     ElMessage.error(`取消失败：${res.msg}`)
@@ -246,6 +255,7 @@ async function rerun(row: WorkflowRun) {
   const res = await rerunRun(pat, ctx.value.owner, ctx.value.repo, row.id)
   if (res.code === 201 || res.code === 200) {
     ElMessage.success('已重新运行')
+    logStore.write({ module: 'action', action: '重新运行流水线', detail: `#${row.run_number} ${row.display_title || row.name}`, level: 'warning' })
     loadRuns()
   } else {
     ElMessage.error(`重跑失败：${res.msg}`)
@@ -332,6 +342,7 @@ async function saveWorkflowYml() {
   saving.value = false
   if (res.code === 200) {
     ElMessage.success('Workflow 已保存并直接提交到远程仓库')
+    logStore.write({ module: 'action', action: '保存Workflow文件', detail: `${ctx.value.owner}/${ctx.value.repo} ${editorPath.value}`, level: 'warning' })
     editorVisible.value = false
     loadWorkflows()
   } else {
