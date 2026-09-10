@@ -3,6 +3,7 @@
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <div class="m-toolbar">
+        <van-button type="primary" size="small" plain @click="openApply">申请PAT</van-button>
         <van-button type="primary" size="small" @click="openAdd">添加账号</van-button>
         <van-button size="small" :loading="accountStore.checking" @click="accountStore.checkAll()">检测全部</van-button>
         <van-button size="small" @click="accountStore.exportConfig()">导出配置</van-button>
@@ -37,6 +38,7 @@
           <div class="m-popup-title">添加 GitHub 账号</div>
           <van-cell-group inset>
             <van-field v-model="form.pat" label="PAT令牌" placeholder="ghp_xxx" type="password" />
+            <van-cell title="还没有令牌？点此申请" is-link @click="openApply" />
             <van-field v-model="form.remark" label="备注" placeholder="例如：公司账号" />
             <van-field v-model="tagsText" label="标签" placeholder="多个用逗号分隔" />
             <van-field v-model="form.group" label="分组" placeholder="可选" />
@@ -57,11 +59,71 @@
           <van-button block type="primary" style="margin-top: 14px" @click="submitEdit">保存</van-button>
         </div>
       </van-popup>
+
+      <van-popup v-model:show="applyVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">申请 GitHub PAT</div>
+          <van-cell-group inset>
+            <van-field v-model="applyForm.note" label="令牌备注" placeholder="GitGreen" />
+            <van-field label="令牌类型">
+              <template #input>
+                <van-radio-group v-model="applyForm.type" direction="horizontal">
+                  <van-radio name="classic">经典</van-radio>
+                  <van-radio name="fine">细粒度</van-radio>
+                </van-radio-group>
+              </template>
+            </van-field>
+            <van-field v-if="applyForm.type === 'classic'" label="权限范围">
+              <template #input>
+                <van-checkbox-group v-model="applyForm.scopes" direction="vertical">
+                  <van-checkbox name="repo">仓库（含私有读写）</van-checkbox>
+                  <van-checkbox name="workflow">工作流（更新 Actions）</van-checkbox>
+                  <van-checkbox name="read:user">读取用户信息</van-checkbox>
+                  <van-checkbox name="gist">Gist</van-checkbox>
+                </van-checkbox-group>
+              </template>
+            </van-field>
+          </van-cell-group>
+          <div class="m-sub" style="margin: 10px 16px">GitHub 不提供程序内一键生成令牌的公开接口，按下述方式到官方页面申请，再把令牌粘贴进「添加账号」。</div>
+          <van-button block plain style="margin-bottom: 10px" @click="copyApplyUrl">复制申请链接</van-button>
+          <van-button block type="primary" @click="openApplyUrl">打开 GitHub 创建页</van-button>
+        </div>
+      </van-popup>
+
+      <div class="m-section-title">SSH 密钥（{{ accountStore.activeAccount ? accountStore.activeAccount.remark || accountStore.activeAccount.username : '当前账号' }}）</div>
+      <div class="m-toolbar">
+        <van-button size="small" :loading="sshLoading" @click="loadSshKeys">刷新</van-button>
+        <van-button size="small" type="primary" plain @click="openSshAdd">新增 SSH Key</van-button>
+      </div>
+      <van-empty v-if="sshKeys.length === 0" description="暂无 SSH Key" />
+      <div v-for="k in sshKeys" :key="k.id" class="m-card">
+        <div class="m-card-head">
+          <div class="m-card-title">
+            <div class="t">{{ k.title }}</div>
+            <div class="m-sub">{{ k.verified ? '已验证' : '未验证' }} · {{ new Date(k.created_at).toLocaleString() }}</div>
+          </div>
+          <van-button size="mini" type="danger" plain @click="removeSshKey(k)">删除</van-button>
+        </div>
+        <div class="m-code">{{ k.key }}</div>
+      </div>
+
+      <van-popup v-model:show="sshVisible" position="bottom" round>
+        <div class="m-popup">
+          <div class="m-popup-title">添加 SSH 公钥</div>
+          <van-cell-group inset>
+            <van-field v-model="sshForm.title" label="标题" placeholder="例如：公司笔记本" />
+            <van-field v-model="sshForm.key" label="公钥" type="textarea" rows="5" placeholder="ssh-ed25519 AAAA..." autosize />
+          </van-cell-group>
+          <div class="m-sub" style="margin: 10px 16px">填写公钥内容（~/.ssh/id_ed25519.pub），私有部分请勿填写</div>
+          <van-button block type="primary" :loading="sshSaving" @click="submitSshKey">添加</van-button>
+        </div>
+      </van-popup>
     </template>
 
     <!-- 桌面形态（Element Plus） -->
     <template v-else>
     <div class="page-toolbar">
+      <el-button type="primary" plain @click="openApply">申请PAT</el-button>
       <el-button type="primary" @click="openAdd">添加账号</el-button>
       <el-button :loading="accountStore.checking" @click="accountStore.checkAll()">检测全部状态</el-button>
       <el-button @click="accountStore.exportConfig()">导出账号配置</el-button>
@@ -116,11 +178,37 @@
       </template>
     </el-table>
 
+    <div class="ssh-section">
+      <div class="ssh-head">
+        <div class="ssh-title">SSH 密钥（{{ accountStore.activeAccount ? accountStore.activeAccount.remark || accountStore.activeAccount.username : '当前账号' }}）</div>
+        <el-button type="primary" plain @click="openSshAdd">新增 SSH Key</el-button>
+      </div>
+      <el-table :data="sshKeys" border stripe v-loading="sshLoading">
+        <el-table-column prop="title" label="标题" min-width="160" />
+        <el-table-column label="公钥" min-width="300">
+          <template #default="{ row }"><span class="ssh-key mono">{{ row.key }}</span></template>
+        </el-table-column>
+        <el-table-column label="验证" width="80">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.verified ? 'success' : 'warning'">{{ row.verified ? '已验证' : '未验证' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="添加时间" width="180">
+          <template #default="{ row }">{{ new Date(row.created_at).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button link type="danger" @click="removeSshKey(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
     <el-dialog v-model="addVisible" title="添加 GitHub 账号（PAT）" width="480px">
       <el-form label-width="90px">
         <el-form-item label="PAT令牌" required>
           <el-input v-model="form.pat" type="password" show-password placeholder="ghp_xxx / github_pat_xxx" />
-          <div class="form-tip">密钥仅本机 AES-256-CBC 加密存储，永不上传任何服务器</div>
+          <div class="form-tip">密钥仅本机 AES-256-CBC 加密存储，永不上传任何服务器 · <el-link type="primary" @click="openApply">去申请 PAT</el-link></div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" placeholder="例如：公司账号" />
@@ -142,7 +230,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑账号" width="480px">
+    <el-dialog v-model="editVisible" title="编辑账号" width="480px">>
       <el-form label-width="90px">
         <el-form-item label="账号">
           <span>{{ editTarget?.username }}</span>
@@ -166,19 +254,67 @@
         <el-button type="primary" @click="submitEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="applyVisible" title="申请 GitHub PAT" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="令牌类型">
+          <el-radio-group v-model="applyForm.type">
+            <el-radio value="classic">经典令牌（简单，全仓库权限）</el-radio>
+            <el-radio value="fine">细粒度令牌（可限定仓库与权限）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="applyForm.type === 'classic'" label="权限范围">
+          <el-checkbox-group v-model="applyForm.scopes">
+            <el-checkbox value="repo">仓库（含私有读写）</el-checkbox>
+            <el-checkbox value="workflow">工作流（更新 Actions）</el-checkbox>
+            <el-checkbox value="read:user">读取用户信息</el-checkbox>
+            <el-checkbox value="gist">Gist</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="令牌备注">
+          <el-input v-model="applyForm.note" placeholder="GitGreen" />
+        </el-form-item>
+      </el-form>
+      <div class="form-tip" style="margin-left: 100px">
+        GitHub 不开放程序内一键生成令牌的公开接口，请打开官方创建页按所选权限申请，之后将生成的令牌粘贴到「添加账号」的 PAT 输入框即可。
+      </div>
+      <template #footer>
+        <el-button @click="applyVisible = false">取消</el-button>
+        <el-button @click="copyApplyUrl">复制申请链接</el-button>
+        <el-button type="primary" @click="openApplyUrl">打开 GitHub 创建页</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="sshVisible" title="添加 SSH 公钥" width="520px">
+      <el-form label-width="90px">
+        <el-form-item label="标题">
+          <el-input v-model="sshForm.title" placeholder="例如：公司笔记本" />
+        </el-form-item>
+        <el-form-item label="公钥" required>
+          <el-input v-model="sshForm.key" type="textarea" :rows="5" placeholder="ssh-ed25519 AAAA... / ssh-rsa AAAA..." />
+          <div class="form-tip">添加的是你的 SSH 公钥（~/.ssh/id_ed25519.pub 内容），密钥私有部分请勿填写</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="sshVisible = false">取消</el-button>
+        <el-button type="primary" :loading="sshSaving" @click="submitSshKey">添加</el-button>
+      </template>
+    </el-dialog>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 defineOptions({ name: 'AccountManage' })
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useIsMobile } from '@/utils/platform'
 import type { GitHubAccount } from '@/api/githubAccount'
+import { listSshKeys, createSshKey, deleteSshKey } from '@/api/githubSsh'
+import type { SshKey } from '@/api/githubSsh'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -202,8 +338,91 @@ const editVisible = ref(false)
 const editTarget = ref<GitHubAccount | null>(null)
 const editForm = reactive({ remark: '', tags: [] as string[], group: '' })
 
+const applyVisible = ref(false)
+const applyForm = reactive({ type: 'classic', scopes: ['repo', 'workflow', 'read:user'] as string[], note: 'GitGreen' })
+
+function openApply() {
+  applyVisible.value = true
+}
+
+function applyUrl() {
+  if (applyForm.type === 'fine') return 'https://github.com/settings/personal-access-tokens/new'
+  const scopes = applyForm.scopes.length ? applyForm.scopes.join(',') : 'repo'
+  return `https://github.com/settings/tokens/new?scopes=${scopes}&description=${encodeURIComponent(applyForm.note || 'GitGreen')}`
+}
+
+function openApplyUrl() {
+  window.open(applyUrl(), '_blank')
+}
+
+function copyApplyUrl() {
+  const url = applyUrl()
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(url).then(
+      () => ElMessage.success('已复制申请链接'),
+      () => ElMessage.warning('复制失败，请手动复制地址')
+    )
+  } else {
+    ElMessage.warning('复制失败，请手动复制地址')
+  }
+}
+
 const knownTags = computed(() => Array.from(new Set(accountStore.accounts.flatMap(a => a.tags))))
 const knownGroups = computed(() => Array.from(new Set(accountStore.accounts.map(a => a.group).filter(Boolean))))
+
+const sshKeys = ref<SshKey[]>([])
+const sshLoading = ref(false)
+const sshVisible = ref(false)
+const sshSaving = ref(false)
+const sshForm = reactive({ title: '', key: '' })
+
+async function loadSshKeys() {
+  const pat = await accountStore.getPat()
+  if (!pat) return
+  sshLoading.value = true
+  const res = await listSshKeys(pat)
+  sshLoading.value = false
+  if (res.code === 200) sshKeys.value = res.data || []
+  else if (res.code === 401 || res.code === 403) ElMessage.error(`SSH Keys加载失败：${res.msg}`)
+}
+
+function openSshAdd() {
+  sshForm.title = ''
+  sshForm.key = ''
+  sshVisible.value = true
+}
+
+async function submitSshKey() {
+  if (!sshForm.title.trim()) return ElMessage.warning('请输入标题')
+  if (!sshForm.key.trim()) return ElMessage.warning('请输入SSH公钥')
+  sshSaving.value = true
+  const pat = await accountStore.getPat()
+  const res = await createSshKey(pat, sshForm.title.trim(), sshForm.key.trim())
+  sshSaving.value = false
+  if (res.code === 200 || res.code === 201) {
+    ElMessage.success('SSH Key已添加')
+    sshVisible.value = false
+    loadSshKeys()
+  } else {
+    ElMessage.error(`添加失败：${res.msg}`)
+  }
+}
+
+async function removeSshKey(k: SshKey) {
+  try {
+    await ElMessageBox.confirm(`确认删除 SSH Key「${k.title}」？`, '确认删除', { type: 'warning' })
+  } catch {
+    return
+  }
+  const pat = await accountStore.getPat()
+  const res = await deleteSshKey(pat, k.id)
+  if (res.code === 204 || res.code === 200) {
+    ElMessage.success('已删除')
+    loadSshKeys()
+  } else ElMessage.error(`删除失败：${res.msg}`)
+}
+
+onMounted(loadSshKeys)
 
 function openAdd() {
   form.pat = ''
@@ -292,6 +511,33 @@ function onImportFile(e: Event) {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 20px;
+}
+.ssh-section {
+  margin-top: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px;
+  background: var(--bg-card);
+}
+.ssh-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.ssh-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.ssh-key {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.mono {
+  font-family: Consolas, monospace;
 }
 .empty-text {
   color: var(--text-secondary);

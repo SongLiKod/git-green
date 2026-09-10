@@ -4,9 +4,10 @@
     <template v-if="isMobile">
       <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
       <template v-else>
-        <van-tabs :active="tab === 'workflows' ? 0 : 1" @change="onMTab">
+        <van-tabs :active="tab === 'workflows' ? 0 : tab === 'runs' ? 1 : 2" @change="onMTab">
           <van-tab title="工作流" />
           <van-tab title="运行记录" />
+          <van-tab title="环境变量" />
         </van-tabs>
 
         <template v-if="tab === 'workflows'">
@@ -25,7 +26,7 @@
           </div>
         </template>
 
-        <template v-else>
+<template v-else-if="tab === 'runs'">
           <div class="m-toolbar">
             <van-cell title="筛选" :value="runFilterName" style="flex: 1; padding: 0" @click="openRunFilter" />
             <van-button size="small" :loading="runsLoading" @click="loadRuns">刷新</van-button>
@@ -49,6 +50,49 @@
             </div>
           </div>
         </template>
+
+        <template v-else>
+          <div class="m-toolbar">
+            <van-button size="small" :loading="varsLoading" @click="loadVars">刷新</van-button>
+            <van-button size="small" type="primary" plain @click="openVarAdd">新增变量</van-button>
+            <van-button size="small" type="primary" plain @click="openSecretAdd">新增密钥</van-button>
+          </div>
+          <div class="m-section-title">环境变量（Actions Variables）</div>
+          <van-empty v-if="vars.length === 0" description="暂无环境变量" />
+          <div v-for="v in vars" :key="v.name" class="m-card">
+            <div class="m-card-head">
+              <div class="m-card-title">
+                <div class="t mono">{{ v.name }}</div>
+                <div class="m-sub">{{ v.value }}</div>
+              </div>
+              <van-button size="mini" plain @click="openVarEdit(v)">编辑</van-button>
+              <van-button size="mini" type="danger" plain @click="removeVariable(v.name)">删除</van-button>
+            </div>
+          </div>
+          <div class="m-section-title">密钥（Secrets，值不可回读）</div>
+          <van-empty v-if="secrets.length === 0" description="暂无密钥" />
+          <div v-for="s in secrets" :key="s.name" class="m-card">
+            <div class="m-card-head">
+              <div class="m-card-title">
+                <div class="t mono">{{ s.name }}</div>
+                <div class="m-sub">更新于 {{ new Date(s.updated_at).toLocaleString() }}</div>
+              </div>
+              <van-button size="mini" plain @click="openSecretUpdate(s)">更新</van-button>
+              <van-button size="mini" type="danger" plain @click="removeSecret(s.name)">删除</van-button>
+            </div>
+          </div>
+        </template>
+
+        <van-popup v-model:show="vDialog" position="bottom" round>
+          <div class="m-popup">
+            <div class="m-popup-title">{{ vMode === 'var' ? (vEdit ? '编辑变量' : '新增变量') : (vEdit ? '更新密钥' : '新增密钥') }}</div>
+            <van-cell-group inset>
+              <van-field v-model="vForm.name" label="名称" :readonly="vEdit" placeholder="如 MY_VAR" />
+              <van-field v-model="vForm.value" :label="vMode === 'var' ? '值' : '密钥值'" placeholder="如 abc_123" />
+            </van-cell-group>
+            <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitVForm">保存</van-button>
+          </div>
+        </van-popup>
 
         <van-action-sheet
           v-model:show="wSheetVisible"
@@ -105,7 +149,7 @@
     <!-- 桌面形态（Element Plus） -->
     <template v-else>
     <template v-if="ctx">
-      <el-tabs v-model="tab" class="action-tabs">
+      <el-tabs v-model="tab" class="action-tabs" @tab-change="onTabChange">
         <el-tab-pane label="Workflow工作流" name="workflows">
           <el-table :data="workflows" border stripe v-loading="loading">
             <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
@@ -164,9 +208,60 @@
             </el-table-column>
           </el-table>
         </el-tab-pane>
+
+        <el-tab-pane label="环境变量" name="vars">
+          <div class="vars-toolbar">
+            <el-button v-loading="varsLoading" @click="loadVars">刷新</el-button>
+            <el-button type="primary" @click="openVarAdd">新增变量</el-button>
+            <el-button type="primary" plain @click="openSecretAdd">新增密钥</el-button>
+          </div>
+          <div class="m-section-title">环境变量（Actions Variables）</div>
+          <el-table :data="vars" border stripe v-loading="varsLoading">
+            <el-table-column prop="name" label="名称" min-width="200"><template #default="{ row }"><span class="mono">{{ row.name }}</span></template></el-table-column>
+            <el-table-column prop="value" label="值" min-width="200"><template #default="{ row }"><span class="mono">{{ row.value }}</span></template></el-table-column>
+            <el-table-column prop="updated_at" label="更新时间" width="180">
+              <template #default="{ row }">{{ new Date(row.updated_at).toLocaleString() }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="150">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openVarEdit(row)">编辑</el-button>
+                <el-button link type="danger" @click="removeVariable(row.name)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="m-section-title">密钥（Secrets，值不可回读，保存前本地加密）</div>
+          <el-table :data="secrets" border stripe v-loading="varsLoading">
+            <el-table-column prop="name" label="名称" min-width="200"><template #default="{ row }"><span class="mono">{{ row.name }}</span></template></el-table-column>
+            <el-table-column prop="updated_at" label="更新时间" width="180">
+              <template #default="{ row }">{{ new Date(row.updated_at).toLocaleString() }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="150">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openSecretUpdate(row)">更新</el-button>
+                <el-button link type="danger" @click="removeSecret(row.name)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
       </el-tabs>
     </template>
     <el-empty v-else description="请先选择仓库" />
+
+    <el-dialog v-model="vDialog" :title="vMode === 'var' ? (vEdit ? '编辑变量' : '新增变量') : (vEdit ? '更新密钥' : '新增密钥')" width="480px">
+      <el-form label-width="90px">
+        <el-form-item label="名称" required>
+          <el-input v-model="vForm.name" :disabled="vEdit" placeholder="如 MY_VAR" />
+        </el-form-item>
+        <el-form-item :label="vMode === 'var' ? '值' : '密钥值'" required>
+          <el-input v-model="vForm.value" :type="vMode === 'var' ? 'text' : 'password'" :show-password="vMode === 'secret'" placeholder="如 abc_123" />
+          <div v-if="vMode === 'secret'" class="form-tip">密钥将使用仓库公钥加密后写入，GitHub 无法回读明文</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="vDialog = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitVForm">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="triggerVisible" title="手动触发流水线" width="440px">
       <el-form label-width="80px">
@@ -225,9 +320,18 @@ import {
   getRunLogs,
   getWorkflowFileContent,
   saveWorkflowFile,
-  parseWorkflowInputs
+  parseWorkflowInputs,
+  listRepoVariables,
+  createRepoVariable,
+  updateRepoVariable,
+  deleteRepoVariable,
+  listRepoSecrets,
+  getSecretPublicKey,
+  createOrUpdateSecret,
+  deleteSecret
 } from '@/api/githubAction'
-import type { Workflow, WorkflowRun } from '@/api/githubAction'
+import type { Workflow, WorkflowRun, RepoVariable, RepoSecret } from '@/api/githubAction'
+import type { ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
 import { useIsMobile } from '@/utils/platform'
@@ -250,9 +354,134 @@ const runFilterName = computed(() => {
   return workflows.value.find(w => w.id === runFilterWorkflow.value)?.name || '已筛选'
 })
 
+const vars = ref<RepoVariable[]>([])
+const secrets = ref<RepoSecret[]>([])
+const varsLoading = ref(false)
+const vDialog = ref(false)
+const vEdit = ref(false)
+const vMode = ref<'var' | 'secret'>('var')
+const vForm = reactive({ name: '', value: '' })
+
+async function loadVars() {
+  if (!ctx.value || varsLoading.value) return
+  varsLoading.value = true
+  try {
+    const pat = await withPat()
+    const [vr, sr] = await Promise.all([
+      listRepoVariables(pat, ctx.value.owner, ctx.value.repo),
+      listRepoSecrets(pat, ctx.value.owner, ctx.value.repo)
+    ])
+    if (vr.code === 200) vars.value = vr.data?.variables || []
+    else if (vr.code === 401 || vr.code === 403) ElMessage.error(`变量加载失败：${vr.msg}`)
+    if (sr.code === 200) secrets.value = sr.data?.secrets || []
+    else if (sr.code === 401 || sr.code === 403) ElMessage.error(`密钥加载失败：${sr.msg}`)
+  } finally {
+    varsLoading.value = false
+  }
+}
+
+function openVarAdd() {
+  vMode.value = 'var'
+  vEdit.value = false
+  vForm.name = ''
+  vForm.value = ''
+  vDialog.value = true
+}
+
+function openVarEdit(row: RepoVariable) {
+  vMode.value = 'var'
+  vEdit.value = true
+  vForm.name = row.name
+  vForm.value = row.value
+  vDialog.value = true
+}
+
+function openSecretAdd() {
+  vMode.value = 'secret'
+  vEdit.value = false
+  vForm.name = ''
+  vForm.value = ''
+  vDialog.value = true
+}
+
+function openSecretUpdate(row: RepoSecret) {
+  vMode.value = 'secret'
+  vEdit.value = true
+  vForm.name = row.name
+  vForm.value = ''
+  vDialog.value = true
+}
+
+async function submitVForm() {
+  if (!ctx.value) return
+  const name = vForm.name.trim()
+  if (!name) return ElMessage.warning('请输入名称')
+  if (!vForm.value.trim()) return ElMessage.warning('请输入值')
+  saving.value = true
+  const pat = await withPat()
+  let res: ApiResult
+  if (vMode.value === 'var') {
+    res = vEdit.value
+      ? await updateRepoVariable(pat, ctx.value.owner, ctx.value.repo, name, vForm.value.trim())
+      : await createRepoVariable(pat, ctx.value.owner, ctx.value.repo, name, vForm.value.trim())
+  } else {
+    const pk = await getSecretPublicKey(pat, ctx.value.owner, ctx.value.repo)
+    if (pk.code !== 200 || !pk.data) {
+      saving.value = false
+      return ElMessage.error(`获取加密公钥失败：${pk.msg}`)
+    }
+    res = await createOrUpdateSecret(pat, ctx.value.owner, ctx.value.repo, name, vForm.value.trim(), pk.data)
+  }
+  saving.value = false
+  if (res.code === 200 || res.code === 201 || res.code === 204) {
+    ElMessage.success(vMode.value === 'var' ? '变量已保存' : '密钥已保存')
+    logStore.write({ module: 'action', action: vMode.value === 'var' ? '保存环境变量' : '保存密钥', detail: `${name} @ ${ctx.value.owner}/${ctx.value.repo}` })
+    vDialog.value = false
+    loadVars()
+  } else {
+    ElMessage.error(`保存失败：${res.msg}`)
+  }
+}
+
+async function removeVariable(name: string) {
+  if (!ctx.value) return
+  try {
+    await ElMessageBox.confirm(`确认删除环境变量「${name}」？`, '确认删除', { type: 'warning' })
+  } catch {
+    return
+  }
+  const pat = await withPat()
+  const res = await deleteRepoVariable(pat, ctx.value.owner, ctx.value.repo, name)
+  if (res.code === 204 || res.code === 200) {
+    ElMessage.success('已删除')
+    loadVars()
+  } else ElMessage.error(`删除失败：${res.msg}`)
+}
+
+async function removeSecret(name: string) {
+  if (!ctx.value) return
+  try {
+    await ElMessageBox.confirm(`确认删除密钥「${name}」？`, '确认删除', { type: 'warning' })
+  } catch {
+    return
+  }
+  const pat = await withPat()
+  const res = await deleteSecret(pat, ctx.value.owner, ctx.value.repo, name)
+  if (res.code === 204 || res.code === 200) {
+    ElMessage.success('已删除')
+    loadVars()
+  } else ElMessage.error(`删除失败：${res.msg}`)
+}
+
+function onTabChange(name: string) {
+  if (name === 'vars') loadVars()
+  else if (name === 'runs') loadRuns()
+}
+
 function onMTab(index: number) {
-  tab.value = index === 0 ? 'workflows' : 'runs'
+  tab.value = index === 0 ? 'workflows' : index === 1 ? 'runs' : 'vars'
   if (tab.value === 'runs') loadRuns()
+  else if (tab.value === 'vars') loadVars()
 }
 
 function openWSheet(w: Workflow) {
@@ -564,6 +793,17 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+}
+.vars-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.form-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 20px;
 }
 .logs-box {
   background: #0d1117;

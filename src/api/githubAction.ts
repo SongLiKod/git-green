@@ -1,5 +1,7 @@
 import service, { auth, encPath, type ApiResult } from './request'
 import { utf8ToBase64 } from '@/utils/crypto'
+import nacl from 'tweetnacl'
+import { encodeBase64, decodeBase64 } from 'tweetnacl-util'
 
 export interface Workflow {
   id: number
@@ -222,4 +224,119 @@ export function saveWorkflowFile(
     { message, content: utf8ToBase64(content), sha, branch },
     { headers: auth(token) }
   ) as unknown as Promise<ApiResult>
+}
+
+/* ==================== 环境变量（Actions Variables / Secrets） ==================== */
+
+export interface RepoVariable {
+  name: string
+  value: string
+  created_at: string
+  updated_at: string
+}
+
+export interface RepoSecret {
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface RepoVariablesResponse {
+  total_count: number
+  variables: RepoVariable[]
+}
+
+export interface RepoSecretsResponse {
+  total_count: number
+  secrets: RepoSecret[]
+}
+
+/** 仓库 Actions 环境变量列表 */
+export function listRepoVariables(token: string, owner: string, repo: string): Promise<ApiResult<RepoVariablesResponse>> {
+  return service.get(`/repos/${owner}/${repo}/actions/variables?per_page=100`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<RepoVariablesResponse>>
+}
+
+/** 新建仓库环境变量 */
+export function createRepoVariable(
+  token: string,
+  owner: string,
+  repo: string,
+  name: string,
+  value: string
+): Promise<ApiResult> {
+  return service.post(`/repos/${owner}/${repo}/actions/variables`, { name, value }, { headers: auth(token) }) as unknown as Promise<ApiResult>
+}
+
+/** 更新仓库环境变量 */
+export function updateRepoVariable(
+  token: string,
+  owner: string,
+  repo: string,
+  name: string,
+  value: string
+): Promise<ApiResult> {
+  return service.patch(`/repos/${owner}/${repo}/actions/variables/${encPath(name)}`, { name, value }, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult>
+}
+
+/** 删除仓库环境变量 */
+export function deleteRepoVariable(token: string, owner: string, repo: string, name: string): Promise<ApiResult> {
+  return service.delete(`/repos/${owner}/${repo}/actions/variables/${encPath(name)}`, { headers: auth(token) }) as unknown as Promise<ApiResult>
+}
+
+/** 仓库 Actions Secrets 列表（仅名称/时间，值不可读） */
+export function listRepoSecrets(token: string, owner: string, repo: string): Promise<ApiResult<RepoSecretsResponse>> {
+  return service.get(`/repos/${owner}/${repo}/actions/secrets?per_page=100`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<RepoSecretsResponse>>
+}
+
+/** 获取 Secrets 加密公钥 */
+export function getSecretPublicKey(
+  token: string,
+  owner: string,
+  repo: string
+): Promise<ApiResult<{ key_id: string; key: string }>> {
+  return service.get(`/repos/${owner}/${repo}/actions/secrets/public-key`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<{ key_id: string; key: string }>>
+}
+
+/**
+ * 用仓库公钥加密 Secret 值（libsodium crypto_box_seal，对应 GitHub 官方规范）
+ */
+export function sealSecret(value: string, publicKeyBase64: string): string {
+  const message = new TextEncoder().encode(value)
+  const recipient = decodeBase64(publicKeyBase64)
+  const ephemeral = nacl.box.keyPair()
+  const nonce = ephemeral.publicKey.subarray(0, 24)
+  const boxed = nacl.box(message, nonce, recipient, ephemeral.secretKey)
+  const out = new Uint8Array(ephemeral.publicKey.length + boxed.length)
+  out.set(ephemeral.publicKey, 0)
+  out.set(boxed, ephemeral.publicKey.length)
+  return encodeBase64(out)
+}
+
+/** 创建 / 更新仓库 Secret（值本地加密后上传，GitHub 端不可读回） */
+export function createOrUpdateSecret(
+  token: string,
+  owner: string,
+  repo: string,
+  name: string,
+  value: string,
+  publicKey: { key_id: string; key: string }
+): Promise<ApiResult> {
+  return service.put(
+    `/repos/${owner}/${repo}/actions/secrets/${encPath(name)}`,
+    { encrypted_value: sealSecret(value, publicKey.key), key_id: publicKey.key_id },
+    { headers: auth(token) }
+  ) as unknown as Promise<ApiResult>
+}
+
+/** 删除仓库 Secret */
+export function deleteSecret(token: string, owner: string, repo: string, name: string): Promise<ApiResult> {
+  return service.delete(`/repos/${owner}/${repo}/actions/secrets/${encPath(name)}`, { headers: auth(token) }) as unknown as Promise<ApiResult>
 }

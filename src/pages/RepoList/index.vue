@@ -116,7 +116,7 @@
             <el-table-column label="仓库" min-width="200">
               <template #default="{ row }">
                 <div class="repo-name">
-                  <span v-if="repoStore.getMeta(row.full_name).pin" class="pin-star">★</span>
+                  <el-icon v-if="repoStore.getMeta(row.full_name).pin" color="var(--color-primary)">★</el-icon>
                   <span class="link-text" @click="selectRepo(row)">{{ row.full_name }}</span>
                   <el-tag size="small" :type="row.private ? 'warning' : 'success'">{{ row.private ? '私有' : '公开' }}</el-tag>
                   <el-tag v-if="row.archived" size="small" type="info">已归档</el-tag>
@@ -452,11 +452,6 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.pin-star {
-  color: var(--color-primary);
-  font-size: 14px;
-  line-height: 1;
 }
 .link-text {
   color: var(--color-primary);

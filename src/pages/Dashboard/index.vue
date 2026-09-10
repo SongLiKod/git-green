@@ -60,7 +60,7 @@
           <div class="d-title">快捷入口</div>
           <div class="quick-grid">
             <div v-for="q in quickEntries" :key="q.path" class="quick-item" @click="router.push(q.path)">
-              <GgIcon :size="20" />
+              <el-icon :size="20" color="var(--color-primary)"><component :is="q.icon" /></el-icon>
               <span>{{ q.title }}</span>
             </div>
           </div>
@@ -103,7 +103,7 @@
 defineOptions({ name: 'Dashboard' })
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import GgIcon from '@/components/GgIcon.vue'
+import { Folder, Tools, Share, VideoPlay, Download, Document, Tickets, Connection } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useLogStore } from '@/stores/useLogStore'
@@ -152,14 +152,14 @@ const recentRepos = computed(() => {
 })
 
 const quickEntries = [
-  { path: '/repo', title: '仓库列表' },
-  { path: '/repo-setting', title: '仓库设置' },
-  { path: '/branch', title: '分支管理' },
-  { path: '/action', title: 'Action流水线' },
-  { path: '/release', title: 'Release管理' },
-  { path: '/file', title: '文件管理' },
-  { path: '/issue', title: 'Issue' },
-  { path: '/pull', title: 'PullRequest' }
+  { path: '/repo', title: '仓库列表', icon: Folder },
+  { path: '/repo-setting', title: '仓库设置', icon: Tools },
+  { path: '/branch', title: '分支管理', icon: Share },
+  { path: '/action', title: 'Action流水线', icon: VideoPlay },
+  { path: '/release', title: 'Release管理', icon: Download },
+  { path: '/file', title: '文件管理', icon: Document },
+  { path: '/issue', title: 'Issue', icon: Tickets },
+  { path: '/pull', title: 'PullRequest', icon: Connection }
 ]
 
 function enterRepo(repo: GitHubRepo) {

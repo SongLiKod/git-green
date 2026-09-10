@@ -3,50 +3,47 @@
     <AppLock />
     <el-container class="app-layout">
       <el-aside v-if="!isMobile" :width="collapsed ? '64px' : '210px'" class="app-aside">
-        <div class="app-logo">
-          <img src="./favicon.svg" class="app-logo-img" alt="GG" />
-          <span v-if="!collapsed">GitGreen</span>
-        </div>
+        <div class="app-logo">{{ collapsed ? 'GG' : 'GitGreen' }}</div>
         <el-menu :default-active="route.path" :collapse="collapsed" :collapse-transition="false" router class="app-menu">
           <el-menu-item index="/dashboard">
-            <GgIcon :size="16" /><template #title>仪表盘</template>
+            <el-icon><Odometer /></el-icon><template #title>仪表盘</template>
           </el-menu-item>
           <el-menu-item index="/account">
-            <GgIcon :size="16" /><template #title>账号管理</template>
+            <el-icon><User /></el-icon><template #title>账号管理</template>
           </el-menu-item>
           <el-menu-item index="/repo">
-            <GgIcon :size="16" /><template #title>仓库列表</template>
+            <el-icon><Folder /></el-icon><template #title>仓库列表</template>
           </el-menu-item>
           <el-menu-item index="/repo-setting">
-            <GgIcon :size="16" /><template #title>仓库设置</template>
+            <el-icon><Tools /></el-icon><template #title>仓库设置</template>
           </el-menu-item>
           <el-menu-item index="/branch">
-            <GgIcon :size="16" /><template #title>分支管理</template>
+            <el-icon><Share /></el-icon><template #title>分支管理</template>
           </el-menu-item>
           <el-menu-item index="/action">
-            <GgIcon :size="16" /><template #title>Action流水线</template>
+            <el-icon><VideoPlay /></el-icon><template #title>Action流水线</template>
           </el-menu-item>
           <el-menu-item index="/release">
-            <GgIcon :size="16" /><template #title>Release管理</template>
+            <el-icon><Download /></el-icon><template #title>Release管理</template>
           </el-menu-item>
           <el-menu-item index="/file">
-            <GgIcon :size="16" /><template #title>文件管理</template>
+            <el-icon><Document /></el-icon><template #title>文件管理</template>
           </el-menu-item>
           <el-menu-item index="/issue">
-            <GgIcon :size="16" /><template #title>Issue管理</template>
+            <el-icon><Tickets /></el-icon><template #title>Issue管理</template>
           </el-menu-item>
           <el-menu-item index="/pull">
-            <GgIcon :size="16" /><template #title>PullRequest</template>
+            <el-icon><Connection /></el-icon><template #title>PullRequest</template>
           </el-menu-item>
           <el-menu-item index="/log">
-            <GgIcon :size="16" /><template #title>操作日志</template>
+            <el-icon><Notebook /></el-icon><template #title>操作日志</template>
           </el-menu-item>
           <el-menu-item index="/settings">
-            <GgIcon :size="16" /><template #title>设置</template>
+            <el-icon><Setting /></el-icon><template #title>设置</template>
           </el-menu-item>
         </el-menu>
         <div class="collapse-bar" @click="toggleCollapse">
-          <GgIcon :size="16" />
+          <el-icon><Expand v-if="collapsed" /><Fold v-else /></el-icon>
           <span v-if="!collapsed">收起</span>
         </div>
       </el-aside>
@@ -103,10 +100,10 @@
               <el-option v-for="r in repoStore.currentRepos" :key="r.full_name" :label="r.name" :value="r.full_name" />
             </el-select>
             <div class="icon-btn" title="主题切换" @click="cycleTheme">
-              <GgIcon :size="18" />
+              <el-icon :size="18"><Monitor v-if="themeStore.themeMode === 'system'" /><Sunny v-else-if="themeStore.themeMode === 'light'" /><Moon v-else /></el-icon>
             </div>
             <div class="icon-btn" title="刷新" @click="onMobileRefresh">
-              <GgIcon :size="18" />
+              <el-icon :size="18"><RefreshRight /></el-icon>
             </div>
           </div>
         </header>
@@ -138,7 +135,7 @@
               :class="{ 'is-active': repoTabActive }"
               @click="repoMenuVisible = true"
             >
-              <GgIcon :size="20" />
+              <el-icon :size="20"><Folder /></el-icon>
               <span class="mobile-tabbar__label">{{ t.title }}</span>
             </div>
             <router-link
@@ -147,7 +144,7 @@
               class="mobile-tabbar__item"
               :class="{ 'is-active': route.path === t.path }"
             >
-              <GgIcon :size="20" />
+              <el-icon :size="20"><component :is="t.icon" /></el-icon>
               <span class="mobile-tabbar__label">{{ t.title }}</span>
             </router-link>
           </template>
@@ -168,7 +165,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import GgIcon from '@/components/GgIcon.vue'
+import { User, Folder, Tools, Share, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, Monitor, Sunny, Moon, RefreshRight, Odometer, Tickets, Connection } from '@element-plus/icons-vue'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
 import AppLock from '@/components/AppLock.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -197,12 +194,12 @@ const isMobile = useIsMobile()
 
 const currentTitle = computed(() => String(route.meta.title || 'GitGreen'))
 
-const mobileTabs: { path: string; title: string; menu?: boolean }[] = [
-  { path: '/dashboard', title: '首页' },
-  { path: '/account', title: '账号' },
+const mobileTabs: { path: string; title: string; icon?: unknown; menu?: boolean }[] = [
+  { path: '/dashboard', title: '首页', icon: Odometer },
+  { path: '/account', title: '账号', icon: User },
   { path: '', title: '仓库', menu: true },
-  { path: '/log', title: '日志' },
-  { path: '/settings', title: '设置' }
+  { path: '/log', title: '日志', icon: Notebook },
+  { path: '/settings', title: '设置', icon: Setting }
 ]
 
 /* 仓库功能菜单（移动端底部「仓库」Tab 弹出） */
@@ -354,22 +351,14 @@ onBeforeUnmount(() => {
 }
 .app-logo {
   height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 18px;
+  line-height: 60px;
+  text-align: center;
+  font-size: 22px;
   font-weight: 700;
   color: var(--color-primary);
   letter-spacing: 1px;
   white-space: nowrap;
   overflow: hidden;
-}
-.app-logo-img {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  flex: none;
 }
 .app-menu {
   border-right: none;
@@ -392,7 +381,7 @@ onBeforeUnmount(() => {
   color: #fff !important;
   font-weight: 600;
 }
-.app-menu :deep(.el-menu-item.is-active .gg-mark) {
+.app-menu :deep(.el-menu-item.is-active .el-icon) {
   color: #fff;
 }
 .collapse-bar {
