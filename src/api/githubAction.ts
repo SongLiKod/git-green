@@ -2,6 +2,7 @@ import service, { auth, encPath, type ApiResult } from './request'
 import { utf8ToBase64 } from '@/utils/crypto'
 import nacl from 'tweetnacl'
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util'
+import blake from 'blakejs'
 
 export interface Workflow {
   id: number
@@ -308,12 +309,18 @@ export function getSecretPublicKey(
 
 /**
  * 用仓库公钥加密 Secret 值（libsodium crypto_box_seal，对应 GitHub 官方规范）
+ *
+ * sealbox 密文 = 临时公钥(32B) + crypto_box 密文，其中 nonce 必须为
+ * BLAKE2b-24(临时公钥 ‖ 仓库公钥)（无密钥哈希），否则 GitHub 端解密失败返回 422。
  */
 export function sealSecret(value: string, publicKeyBase64: string): string {
   const message = new TextEncoder().encode(value)
   const recipient = decodeBase64(publicKeyBase64)
   const ephemeral = nacl.box.keyPair()
-  const nonce = ephemeral.publicKey.subarray(0, 24)
+  const nonceInput = new Uint8Array(32 + 32)
+  nonceInput.set(ephemeral.publicKey, 0)
+  nonceInput.set(recipient, 32)
+  const nonce = blake.blake2b(nonceInput, null, 24)
   const boxed = nacl.box(message, nonce, recipient, ephemeral.secretKey)
   const out = new Uint8Array(ephemeral.publicKey.length + boxed.length)
   out.set(ephemeral.publicKey, 0)
