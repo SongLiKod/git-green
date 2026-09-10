@@ -1,6 +1,6 @@
 import axios from 'axios'
 import service, { auth, type ApiResult } from './request'
-import { encryptPAT } from '@/utils/crypto'
+import { encryptPAT, decryptPAT, exportKeyMaterial, importKeyMaterial } from '@/utils/crypto'
 
 /** 账号状态：正常 / 过期 / 失效 */
 export type AccountStatus = 'normal' | 'expired' | 'invalid'
@@ -105,6 +105,16 @@ export function editAccount(
   return { code: 200, msg: 'success', data: acc }
 }
 
+/** 更新账号主密钥（新 PAT）——调用方需先 verifyPat 校验 */
+export async function setPat(id: string, pat: string): Promise<ApiResult> {
+  const list = getLocalAccountList()
+  const acc = list.find(a => a.id === id)
+  if (!acc) return { code: 500, msg: '账号不存在' }
+  acc.encryptedPat = await encryptPAT(pat)
+  saveLocalAccountList(list)
+  return { code: 200, msg: 'success', data: acc }
+}
+
 /** 更新账号状态（正常/过期/失效） */
 export function setAccountStatus(id: string, status: AccountStatus): ApiResult {
   const list = getLocalAccountList()
@@ -125,13 +135,25 @@ export function deleteAccount(id: string): ApiResult {
   return { code: 200, msg: 'success' }
 }
 
-/** 导出加密账号配置（PAT 密文导出，导入端需同设备解密） */
-export function exportAccounts(): string {
-  return JSON.stringify({ app: 'GitGreen', version: 1, exportedAt: Date.now(), accounts: getLocalAccountList() }, null, 2)
+/** 导出加密账号配置（含主密钥材料，可跨设备/清空后还原解出 PAT） */
+export async function exportAccounts(): Promise<string> {
+  const km = await exportKeyMaterial()
+  return JSON.stringify(
+    {
+      app: 'GitGreen',
+      version: 2,
+      exportedAt: Date.now(),
+      salt: km.salt,
+      mkWrapped: km.mkWrapped,
+      accounts: getLocalAccountList()
+    },
+    null,
+    2
+  )
 }
 
-/** 导入账号配置备份 */
-export function importAccounts(json: string): ApiResult<number> {
+/** 导入账号配置备份；含密钥材料时先恢复主密钥，保证账号密文可解密 */
+export async function importAccounts(json: string): Promise<ApiResult<number>> {
   let parsed: any
   try {
     parsed = JSON.parse(json)
@@ -140,14 +162,39 @@ export function importAccounts(json: string): ApiResult<number> {
   }
   const incoming: GitHubAccount[] = Array.isArray(parsed) ? parsed : parsed?.accounts
   if (!Array.isArray(incoming)) return { code: 500, msg: '导入文件格式错误' }
+  if (parsed && typeof parsed.salt === 'string' && typeof parsed.mkWrapped === 'string') {
+    try {
+      await importKeyMaterial(parsed.salt, parsed.mkWrapped)
+    } catch {
+      return { code: 500, msg: '密钥材料恢复失败，无法解密导入的账号' }
+    }
+  }
   const list = getLocalAccountList()
   let count = 0
+  const imported: GitHubAccount[] = []
   for (const acc of incoming) {
     if (!acc?.id || !acc?.username || !acc?.encryptedPat) continue
     if (list.some(a => a.id === acc.id)) continue
-    list.push({ ...acc, sshHost: acc.sshHost || 'github.com' })
+    const clone = { ...acc, sshHost: acc.sshHost || 'github.com' }
+    list.push(clone)
+    imported.push(clone)
     count++
   }
   saveLocalAccountList(list)
-  return { code: 200, msg: `成功导入 ${count} 个账号`, data: count }
+  let okCount = imported.length
+  if (imported.length) {
+    for (const acc of imported) {
+      try {
+        await decryptPAT(acc.encryptedPat)
+      } catch {
+        okCount--
+      }
+    }
+  }
+  const keyNote = parsed?.salt ? '（含主密钥还原）' : ''
+  return {
+    code: 200,
+    msg: `成功导入 ${count} 个账号${keyNote}；其中 ${okCount} 个可正常解密${okCount < count ? `，${count - okCount} 个解密失败（主密钥不匹配/数据损坏，请重新导出）` : ''}`,
+    data: count
+  }
 }

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as accountApi from '@/api/githubAccount'
 import type { GitHubAccount, AccountStatus } from '@/api/githubAccount'
 import { decryptPAT } from '@/utils/crypto'
+import { isMasterKeyReady } from '@/utils/crypto'
 import { textDownload } from '@/utils/platform'
 import { useLogStore } from './useLogStore'
 
@@ -37,8 +38,12 @@ export const useAccountStore = defineStore('account', () => {
     }
     try {
       return await decryptPAT(acc.encryptedPat)
-    } catch {
-      ElMessage.error('主密钥不可用：应用已锁定或凭证已失效，请解锁后重试')
+    } catch (e: any) {
+      if (!isMasterKeyReady()) {
+        ElMessage.error('应用已锁定，请先解锁后再操作')
+      } else {
+        ElMessage.error(`PAT解密失败：${String(e?.message || e)}（主密钥与数据不匹配，需重新绑定该账号）`)
+      }
       return ''
     }
   }
@@ -74,6 +79,26 @@ export const useAccountStore = defineStore('account', () => {
     } else {
       ElMessage.error(res.msg)
     }
+  }
+
+  /** 更新账号 PAT：先校验新令牌，再重新加密存储 */
+  async function updatePat(id: string, pat: string): Promise<boolean> {
+    const t = pat.trim()
+    if (!t) return false
+    const v = await accountApi.verifyPat(t)
+    if (v.code !== 200) {
+      ElMessage.error(`令牌校验失败：${v.msg}`)
+      return false
+    }
+    const res = await accountApi.setPat(id, t)
+    if (res.code === 200) {
+      reload()
+      ElMessage.success('PAT令牌已更新')
+      await logStore.write({ module: 'account', action: '更新PAT', detail: `更新账号 ${res.data?.username || id} 的令牌`, level: 'warning' })
+      return true
+    }
+    ElMessage.error(res.msg)
+    return false
   }
 
   function deleteAccount(id: string) {
@@ -129,20 +154,25 @@ export const useAccountStore = defineStore('account', () => {
     }
   }
 
-  /** 导出加密账号配置备份 */
-  function exportConfig() {
+  /** 导出加密账号配置备份（含主密钥材料，可跨设备还原） */
+  async function exportConfig() {
     if (accounts.value.length === 0) {
       ElMessage.warning('暂无账号可导出')
       return
     }
-    textDownload(accountApi.exportAccounts(), `gitgreen-accounts-${Date.now()}.json`)
-    ElMessage.success('账号配置已导出（PAT为AES密文）')
-    logStore.write({ module: 'account', action: '导出账号配置', detail: `导出 ${accounts.value.length} 个账号（AES密文）` })
+    try {
+      const json = await accountApi.exportAccounts()
+      textDownload(json, `gitgreen-accounts-${Date.now()}.json`)
+      ElMessage.success('账号配置已导出（含可还原的主密钥材料）')
+      logStore.write({ module: 'account', action: '导出账号配置', detail: `导出 ${accounts.value.length} 个账号（含密钥材料）` })
+    } catch (e: any) {
+      ElMessage.error(String(e?.message || '导出失败：请先解锁应用'))
+    }
   }
 
   /** 导入账号配置备份 */
   async function importConfig(json: string) {
-    const res = accountApi.importAccounts(json)
+    const res = await accountApi.importAccounts(json)
     if (res.code === 200) {
       reload()
       ElMessage.success(res.msg)
@@ -163,6 +193,7 @@ export const useAccountStore = defineStore('account', () => {
     switchAccount,
     addAccount,
     editAccount,
+    updatePat,
     deleteAccount,
     refreshStatus,
     checkAll,

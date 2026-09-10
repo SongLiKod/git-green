@@ -54,6 +54,7 @@
         <div class="m-popup">
           <div class="m-popup-title">编辑 {{ editTarget?.username }}</div>
           <van-cell-group inset>
+            <van-field v-model="editForm.pat" label="PAT令牌" placeholder="留空则保持不变" type="password" />
             <van-field v-model="editForm.remark" label="备注" />
             <van-field v-model="editForm.sshHost" label="SSH主机" placeholder="github.com" />
             <van-field v-model="editTagsText" label="标签" placeholder="多个用逗号分隔" />
@@ -261,10 +262,14 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑账号" width="480px">>
+    <el-dialog v-model="editVisible" title="编辑账号" width="480px">
       <el-form label-width="90px">
         <el-form-item label="账号">
           <span>{{ editTarget?.username }}</span>
+        </el-form-item>
+        <el-form-item label="PAT令牌">
+          <el-input v-model="editForm.pat" type="password" show-password placeholder="留空则保持不变" />
+          <div class="form-tip">填写后将校验并替换该账号的令牌，留空不修改</div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="editForm.remark" />
@@ -383,7 +388,7 @@ const form = reactive({ pat: '', remark: '', tags: [] as string[], group: '', ss
 
 const editVisible = ref(false)
 const editTarget = ref<GitHubAccount | null>(null)
-const editForm = reactive({ remark: '', tags: [] as string[], group: '', sshHost: '' })
+const editForm = reactive({ remark: '', tags: [] as string[], group: '', sshHost: '', pat: '' })
 
 const applyVisible = ref(false)
 const applyForm = reactive({ type: 'classic', scopes: ['repo', 'workflow', 'read:user'] as string[], note: 'GitGreen' })
@@ -508,15 +513,20 @@ function openEdit(row: GitHubAccount) {
   editForm.tags = [...row.tags]
   editForm.group = row.group
   editForm.sshHost = row.sshHost && row.sshHost.trim() !== 'github.com' ? row.sshHost : ''
+  editForm.pat = ''
   editTagsText.value = row.tags.join(',')
   editVisible.value = true
 }
 
-function submitEdit() {
+async function submitEdit() {
   if (!editTarget.value) return
   const tags = editTagsText.value
     ? editTagsText.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
     : editForm.tags
+  if (editForm.pat.trim()) {
+    const ok = await accountStore.updatePat(editTarget.value.id, editForm.pat)
+    if (!ok) return
+  }
   accountStore.editAccount(editTarget.value.id, {
     remark: editForm.remark.trim(),
     tags,
