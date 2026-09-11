@@ -20,6 +20,9 @@
           <el-menu-item index="/branch">
             <el-icon><Share /></el-icon><template #title>分支管理</template>
           </el-menu-item>
+          <el-menu-item index="/commits">
+            <el-icon><Clock /></el-icon><template #title>提交历史</template>
+          </el-menu-item>
           <el-menu-item index="/action">
             <el-icon><VideoPlay /></el-icon><template #title>Action流水线</template>
           </el-menu-item>
@@ -165,7 +168,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Folder, Tools, Share, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, Monitor, Sunny, Moon, RefreshRight, Odometer, Tickets, Connection } from '@element-plus/icons-vue'
+import { User, Folder, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, Monitor, Sunny, Moon, RefreshRight, Odometer, Tickets, Connection } from '@element-plus/icons-vue'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
 import AppLock from '@/components/AppLock.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -203,13 +206,14 @@ const mobileTabs: { path: string; title: string; icon?: unknown; menu?: boolean 
 ]
 
 /* 仓库功能菜单（移动端底部「仓库」Tab 弹出） */
-const repoPages = ['/repo', '/repo-setting', '/branch', '/action', '/release', '/file', '/issue', '/pull']
+const repoPages = ['/repo', '/repo-setting', '/branch', '/commits', '/action', '/release', '/file', '/issue', '/pull']
 const repoMenuVisible = ref(false)
 const repoTabActive = computed(() => repoPages.includes(route.path))
 const repoMenuActions = [
   { name: '仓库列表', path: '/repo' },
   { name: '仓库设置', path: '/repo-setting' },
   { name: '分支管理', path: '/branch' },
+  { name: '提交历史', path: '/commits' },
   { name: 'Action流水线', path: '/action' },
   { name: 'Release管理', path: '/release' },
   { name: '文件管理', path: '/file' },
@@ -238,7 +242,7 @@ const multiTab = computed(() => settingsStore.config.pageMode === 'multi')
 
 /** 仅仓库相关页面显示顶部 仓库 选择上下文 */
 const showContextBar = computed(() =>
-  ['/repo-setting', '/branch', '/action', '/release', '/file', '/issue', '/pull'].includes(route.path)
+  ['/repo-setting', '/branch', '/commits', '/action', '/release', '/file', '/issue', '/pull'].includes(route.path)
 )
 
 const repoLoading = computed(() => !!repoStore.loadingMap[repoStore.currentAccountId])

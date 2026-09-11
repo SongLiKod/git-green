@@ -20,7 +20,7 @@ export interface BranchCompareResult {
   behind_by: number
   total_commits: number
   commits: { sha: string; commit: { message: string; author: { name: string; date: string } } }[]
-  files: { filename: string; status: string; additions: number; deletions: number; changes: number }[]
+  files: { filename: string; status: string; additions: number; deletions: number; changes: number; patch?: string }[]
 }
 
 /** 获取所有远程分支列表 */

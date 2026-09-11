@@ -30,7 +30,7 @@
             <div class="m-sub">{{ detail.head.ref }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
             <pre class="m-code" style="max-height: 18vh">{{ detail.body || '（无描述）' }}</pre>
             <div class="m-section-title" style="margin-left: 0">变更文件（{{ files.length }}）</div>
-            <van-cell v-for="f in files" :key="f.filename" :title="f.filename" :label="prStatusText(f.status)" :value="`+${f.additions}/-${f.deletions}`" />
+            <FileDiffList :files="files" @preview="openFilePreview" />
             <div class="m-section-title" style="margin-left: 0">评论（{{ comments.length }}）</div>
             <div v-for="c in comments" :key="c.id" class="m-card" style="margin: 0 0 8px">
               <div class="m-sub">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
@@ -115,14 +115,7 @@
             <div class="pr-meta">{{ detail.head.ref }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
             <pre class="body-pre">{{ detail.body || '（无描述）' }}</pre>
             <div class="sub-title">变更文件（{{ files.length }}）</div>
-            <el-table :data="files" border size="small" max-height="220">
-              <el-table-column prop="filename" label="文件" min-width="220" />
-              <el-table-column label="状态" width="90">
-                <template #default="{ row }">{{ prStatusText(row.status) }}</template>
-              </el-table-column>
-              <el-table-column prop="additions" label="新增" width="70" />
-              <el-table-column prop="deletions" label="删除" width="70" />
-            </el-table>
+            <FileDiffList :files="files" @preview="openFilePreview" />
             <div class="sub-title">评论（{{ comments.length }}）</div>
             <div v-for="c in comments" :key="c.id" class="comment-item">
               <div class="comment-head">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
@@ -170,6 +163,8 @@
       </template>
       <el-empty v-else description="请先选择仓库" />
     </template>
+
+    <SourceFilePreview v-model="filePreviewVisible" :filename="previewFilename" :load="previewLoader" />
   </div>
 </template>
 
@@ -189,6 +184,8 @@ import type { IssueComment } from '@/api/githubIssue'
 import { getBranches } from '@/api/githubBranch'
 import { getCollaborators } from '@/api/githubRepo'
 import { useIsMobile } from '@/utils/platform'
+import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
+import SourceFilePreview, { loadSourcePreview } from '@/components/SourceFilePreview.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -234,8 +231,25 @@ async function withPat() {
   return await accountStore.getPat(repoStore.currentAccountId)
 }
 
-function prStatusText(s: string) {
-  return ({ added: '新增', removed: '删除', modified: '修改', renamed: '重命名' } as Record<string, string>)[s] || s
+/** 仅新增/修改的文件可点击预览源文件（PR head 分支存在该文件） */
+function fileClickable(f: DiffFile): boolean {
+  return f.status === 'added' || f.status === 'modified'
+}
+
+const filePreviewVisible = ref(false)
+const previewFilename = ref('')
+
+function openFilePreview(f: DiffFile) {
+  if (!fileClickable(f)) return
+  previewFilename.value = f.filename
+  filePreviewVisible.value = true
+}
+
+async function previewLoader(name: string) {
+  const c = ctx.value
+  if (!c || !detail.value) throw new Error('请先打开 PR 详情')
+  const pat = await withPat()
+  return loadSourcePreview(pat, c.owner, c.repo, name, detail.value.head.sha)
 }
 
 async function loadPRs() {

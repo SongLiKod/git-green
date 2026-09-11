@@ -22,6 +22,7 @@ export const useTabStore = defineStore('tab', () => {
     'RepoList',
     'RepoSetting',
     'BranchManage',
+    'CommitHistory',
     'ActionManage',
     'ReleaseManage',
     'FileManager',

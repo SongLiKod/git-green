@@ -37,7 +37,7 @@
             <div class="m-card-head">
               <div class="m-card-title">
                 <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
-                <div class="m-sub">{{ r.branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
+                <div class="m-sub">{{ r.head_branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
               </div>
               <van-tag :type="r.status !== 'completed' ? 'warning' : r.conclusion === 'success' ? 'success' : r.conclusion === 'cancelled' ? 'default' : 'danger'">
                 {{ runText(r) }}
@@ -170,6 +170,19 @@
                 </div>
                 <div class="ann-msg">{{ a.item.message }}</div>
               </div>
+              <template v-if="runFailed">
+                <div class="m-section-title">
+                  <div class="err-head">
+                    <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
+                    <div class="err-actions">
+                      <van-button size="mini" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</van-button>
+                      <van-button size="mini" type="danger" plain :disabled="!runErrors" @click="copyRunErrors">一键复制</van-button>
+                    </div>
+                  </div>
+                </div>
+                <pre v-if="runErrors" class="error-box">{{ runErrors }}</pre>
+                <van-empty v-else description="未从日志中提取到异常信息" />
+              </template>
             </template>
             <div class="m-actions"><van-button block @click="closeRunResult">关闭</van-button></div>
           </div>
@@ -224,7 +237,7 @@
                 <span class="mono">#{{ row.run_number }}</span> {{ row.display_title || row.name }}
               </template>
             </el-table-column>
-            <el-table-column prop="branch" label="分支" width="140" />
+            <el-table-column prop="head_branch" label="分支" width="140" />
             <el-table-column prop="event" label="触发方式" width="130" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
@@ -372,6 +385,19 @@
           </el-table-column>
           <el-table-column prop="item.message" label="内容" min-width="240"><template #default="{ row }"><div class="ann-msg">{{ row.item.message }}</div></template></el-table-column>
         </el-table>
+        <template v-if="runFailed">
+          <div class="m-section-title">
+            <div class="err-head">
+              <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
+              <div class="err-actions">
+                <el-button size="small" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</el-button>
+                <el-button size="small" type="danger" plain :disabled="!runErrors" @click="copyRunErrors">一键复制</el-button>
+              </div>
+            </div>
+          </div>
+          <pre v-if="runErrors" class="error-box">{{ runErrors }}</pre>
+          <el-empty v-else description="未从日志中提取到异常信息" :image-size="60" />
+        </template>
       </div>
       <template #footer>
         <el-button @click="closeRunResult">关闭</el-button>
@@ -742,6 +768,9 @@ const resultRun = ref<WorkflowRun | null>(null)
 const resultLoading = ref(false)
 const runArtifacts = ref<RunArtifact[]>([])
 const annotations = ref<{ check: string; item: CheckRunAnnotation }[]>([])
+const runErrors = ref('')
+const runErrorRaw = ref('')
+const runFailed = ref(false)
 const downloading = ref<string>('')
 
 const qrVisible = ref(false)
@@ -760,6 +789,9 @@ async function openRunResult(row: WorkflowRun) {
   resultVisible.value = true
   runArtifacts.value = []
   annotations.value = []
+  runErrors.value = ''
+  runErrorRaw.value = ''
+  runFailed.value = row.status === 'completed' && !!row.conclusion && !['success', 'cancelled', 'skipped', 'neutral'].includes(row.conclusion)
   resultLoading.value = true
   const pat = await withPat()
   const [ar, jr] = await Promise.all([
@@ -779,7 +811,133 @@ async function openRunResult(row: WorkflowRun) {
     }
   }
   annotations.value = anns
+  if (runFailed.value) {
+    const logsRes = await getRunLogs(pat, ctx.value.owner, ctx.value.repo, row.id)
+    if (logsRes.code === 200 && logsRes.data) {
+      const steps = extractFailSteps(logsRes.data)
+      runErrors.value = steps
+        .map(s => (s.job ? `===== ${s.job} =====\n` : '') + errorDisplaySlice(s.raw.split('\n').map(l => l.replace(TS_RE, ''))))
+        .join('\n\n')
+      runErrorRaw.value = steps.map(s => (s.job ? `===== ${s.job} =====\n` : '') + s.raw).join('\n\n')
+    }
+  }
   resultLoading.value = false
+}
+
+const TS_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/
+
+/** Gradle/Go/Node 等失败步骤的行内异常块锚点（从这些标记开始展示） */
+const BLOCK_INTRO_RE = /^\s*(?:FAILURE:|BUILD FAILED|npm ERR|\* What went wrong:|Caught exception:|Exception:|Caused by:|Traceback\b|--->|Fatal\s*:)/i
+const ERROR_ANCHOR_RE = /##\[error\]|^\s*(?:Error|ERROR)\s*:/i
+
+const DISPLAY_MAX = 600
+
+/** 展示/复制用的精简视图：锚定异常块（Gradle 的 FAILURE:/* What went wrong:、Node 的 Error: 栈等），
+ *  保留完整错误与堆栈，只裁剪顶部无关的构建进度；省略部分提示可用“下载错误日志”取完整原文。 */
+function errorDisplaySlice(lines: string[]): string {
+  const full = lines.length
+  let start = lines.findIndex(l => BLOCK_INTRO_RE.test(l))
+  if (start < 0) start = lines.findIndex(l => ERROR_ANCHOR_RE.test(l))
+  if (start < 0) start = Math.max(0, full - 400)
+  if (full - start > DISPLAY_MAX) {
+    start = full - DISPLAY_MAX
+    for (let i = start; i < full; i++) {
+      if (BLOCK_INTRO_RE.test(lines[i]) || ERROR_ANCHOR_RE.test(lines[i])) {
+        start = i
+        break
+      }
+    }
+  }
+  const kept = lines.slice(start)
+  const head = start > 0 ? `…… 上方 ${start} 行构建进度已省略，完整日志请点“下载错误日志”查看 ………\n\n` : ''
+  return head + kept.join('\n')
+}
+
+/** 提取失败步骤的完整原文块（保留时间戳与真实栈信息），供展示与下载 */
+function extractFailSteps(log: string): { job: string; raw: string }[] {
+  if (!log) return []
+  const steps: { job: string; raw: string }[] = []
+  let jobName = ''
+  let stepRaw: string[] = []
+  let stepStarted = false
+  let failRaw: string[] | null = null
+  let failJob = ''
+
+  const isErrorStart = (line: string) =>
+    /##\[error\]/.test(line) ||
+    /^\s*(?:error|Error)\s*(:|\s*\d)/i.test(line) ||
+    /^\s*(?:fatal|Fatal)\s*:/i.test(line) ||
+    /^\s*(?:exception|Exception)\s*:/i.test(line) ||
+    /^\s*traceback\s*\(most recent call last\)\s*:/i.test(line) ||
+    /^\s*npm ERR[\s!#]/i.test(line) ||
+    /^\s*\^\^+\s*$/.test(line) ||
+    /:\s*error\s+(?:TS|A\d+|-?\d+)/i.test(line)
+
+  const flushFail = () => {
+    if (failRaw && failRaw.length) {
+      const text = failRaw.join('\n').trim()
+      if (text) steps.push({ job: failJob, raw: text })
+    }
+    failRaw = null
+  }
+
+  for (const raw of log.split(/\r?\n/)) {
+    const line = raw.replace(TS_RE, '')
+    const trim = line.trim()
+    if (!trim) continue
+
+    const jobMatch = line.match(/^===== Job #\d+ (.+?) \[(.+)\] =====$/)
+    if (jobMatch) {
+      flushFail()
+      jobName = `${jobMatch[1]} [${jobMatch[2]}]`
+      stepRaw = []
+      stepStarted = false
+      continue
+    }
+
+    if (/^##\[group\]/.test(trim)) {
+      flushFail()
+      stepRaw = [raw]
+      stepStarted = true
+      continue
+    }
+
+    if (stepStarted) stepRaw.push(raw)
+
+    if (isErrorStart(line)) {
+      if (!failRaw) {
+        failRaw = stepStarted ? stepRaw.slice() : [raw]
+        failJob = jobName
+      } else failRaw.push(raw)
+      continue
+    }
+    if (failRaw && !/^##\[command\]/.test(line)) failRaw.push(raw)
+  }
+  flushFail()
+  return steps
+}
+
+async function copyRunErrors() {
+  if (!runErrors.value) return
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(runErrors.value)
+      ElMessage.success('异常信息已复制')
+    } catch {
+      ElMessage.warning('复制失败，请手动复制')
+    }
+  } else {
+    ElMessage.warning('复制失败，请手动复制')
+  }
+}
+
+function downloadErrorLog() {
+  if (!ctx.value || !runErrorRaw.value) return
+  const num = resultRun.value?.run_number || ''
+  const name = `action-errors-${ctx.value.owner}-${ctx.value.repo}-#${num}.log`
+  blobDownload(new Blob([runErrorRaw.value], { type: 'text/plain' }), name)
+  logStore.write({ module: 'action', action: '下载错误日志', detail: `${ctx.value.owner}/${ctx.value.repo} #${num}`, level: 'warning' })
+  ElMessage.success('错误日志已下载')
 }
 
 async function downloadArtifact(art: RunArtifact) {
@@ -988,6 +1146,32 @@ onBeforeUnmount(() => {
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+.err-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.err-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.error-box {
+  background: #2b1a1a;
+  color: #ffb4b4;
+  border: 1px solid #7a2f2f;
+  padding: 12px;
+  border-radius: 6px;
+  max-height: 300px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-bottom: 10px;
 }
 :deep(.yml-editor textarea) {
   font-family: Consolas, monospace;

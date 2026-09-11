@@ -12,7 +12,7 @@
           <div class="m-card-head">
             <div class="m-card-title">
               <div class="t">{{ b.name }}</div>
-              <div class="m-sub">{{ b.commit.sha.slice(0, 8) }}</div>
+              <div class="m-sub" title="点击查看提交详情"><span class="m-link" @click="openCommit(b)">{{ b.commit.sha.slice(0, 8) }}</span></div>
             </div>
             <van-tag v-if="b.name === repo?.default_branch" type="success">默认</van-tag>
             <van-tag v-if="b.protected" type="warning">保护</van-tag>
@@ -39,14 +39,22 @@
             <van-tag>{{ diff.status }}</van-tag>
             <van-tag plain type="primary">差异提交 {{ diff.total_commits }}</van-tag>
           </div>
-          <van-cell
-            v-for="f in diff.files"
-            :key="f.filename"
-            :title="f.filename"
-            :label="statusText(f.status)"
-            :value="`+${f.additions}/-${f.deletions}`"
-          />
+          <FileDiffList :files="diff.files" @preview="previewDiffFile" />
         </div>
+
+        <van-popup v-model:show="commitVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup" v-if="commitDetail">
+            <div class="m-popup-title">提交 {{ commitDetail.sha.slice(0, 7) }}</div>
+            <div class="m-sub">{{ commitDetail.sha }}</div>
+            <pre class="m-code">{{ commitDetail.commit.message }}</pre>
+            <div class="m-sub">{{ commitDetail.commit.author.name }} · {{ commitDetail.author?.login || '未知' }} · {{ new Date(commitDetail.commit.author.date).toLocaleString() }}</div>
+            <template v-if="commitDetail.files && commitDetail.files.length">
+              <div class="m-section-title" style="margin: 12px 0 8px">变更文件（{{ commitDetail.files.length }}）</div>
+<FileDiffList :files="commitDetail.files" @preview="previewCommitFile" />
+            </template>
+            <van-button block style="margin-top: 10px" @click="commitVisible = false">关闭</van-button>
+          </div>
+        </van-popup>
 
         <van-popup v-model:show="createVisible" position="bottom" round>
           <div class="m-popup">
@@ -104,8 +112,10 @@
               <el-tag v-if="row.protected" size="small" type="warning">受保护</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="最新提交" width="140">
-            <template #default="{ row }">{{ row.commit.sha.slice(0, 8) }}</template>
+          <el-table-column label="最新提交" width="150">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openCommit(row)">{{ row.commit.sha.slice(0, 8) }}</el-button>
+            </template>
           </el-table-column>
           <el-table-column label="操作" width="260">
             <template #default="{ row }">
@@ -137,18 +147,25 @@
             <el-tag>状态：{{ diff.status }}</el-tag>
             <el-tag type="info">共 {{ diff.total_commits }} 个差异提交</el-tag>
           </div>
-          <el-table :data="diff.files" border size="small" max-height="260">
-            <el-table-column prop="filename" label="变更文件" min-width="240" />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">{{ statusText(row.status) }}</template>
-            </el-table-column>
-            <el-table-column prop="additions" label="新增" width="80" />
-            <el-table-column prop="deletions" label="删除" width="80" />
-          </el-table>
+          <FileDiffList :files="diff.files" @preview="previewDiffFile" />
         </template>
       </el-card>
     </template>
     <el-empty v-else description="请先选择仓库" />
+
+    <el-dialog v-model="commitVisible" :title="commitDetail ? `提交 ${commitDetail.sha.slice(0, 7)}` : ''" width="680px" top="4vh">
+      <template v-if="commitDetail">
+        <pre class="body-pre">{{ commitDetail.commit.message }}</pre>
+        <div class="comment-meta">{{ commitDetail.sha }} · {{ commitDetail.commit.author.name }} · {{ commitDetail.author?.login || '未知' }} · {{ new Date(commitDetail.commit.author.date).toLocaleString() }}</div>
+        <template v-if="commitDetail.files && commitDetail.files.length">
+          <div class="sub-title">变更文件（{{ commitDetail.files.length }}）</div>
+          <FileDiffList :files="commitDetail.files" @preview="previewCommitFile" />
+        </template>
+      </template>
+      <template #footer>
+        <el-button @click="commitVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="createVisible" title="创建远程分支" width="440px">
       <el-form label-width="90px">
@@ -186,6 +203,8 @@
       </template>
     </el-dialog>
     </template>
+
+    <SourceFilePreview v-model="filePreviewVisible" :filename="previewFilename" :load="previewLoader" />
   </div>
 </template>
 
@@ -208,7 +227,11 @@ import {
   deleteBranchProtection
 } from '@/api/githubBranch'
 import type { GitHubBranch, BranchCompareResult } from '@/api/githubBranch'
+import { getCommit } from '@/api/githubIssue'
+import type { GithubCommitInfo } from '@/api/githubIssue'
 import { useIsMobile } from '@/utils/platform'
+import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
+import SourceFilePreview, { loadSourcePreview } from '@/components/SourceFilePreview.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -373,8 +396,50 @@ async function runDiff() {
   else ElMessage.error(`对比失败：${res.msg}`)
 }
 
-function statusText(s: string) {
-  return ({ added: '新增', removed: '删除', modified: '修改', renamed: '重命名' } as Record<string, string>)[s] || s
+/** 仅新增/修改的文件可点击预览源文件（对比分支存在该文件） */
+function fileClickable(f: DiffFile): boolean {
+  return f.status === 'added' || f.status === 'modified'
+}
+
+const filePreviewVisible = ref(false)
+const previewFilename = ref('')
+const previewRef = ref('')
+
+function openFilePreview(f: DiffFile, ref: string) {
+  if (!fileClickable(f)) return
+  previewFilename.value = f.filename
+  previewRef.value = ref
+  filePreviewVisible.value = true
+}
+
+function previewDiffFile(f: DiffFile) {
+  if (!diffHead.value) return
+  openFilePreview(f, diffHead.value)
+}
+
+function previewCommitFile(f: DiffFile) {
+  if (!commitDetail.value) return
+  openFilePreview(f, commitDetail.value.sha)
+}
+
+async function previewLoader(name: string) {
+  const c = ctx.value
+  if (!c || !previewRef.value) throw new Error('预览上下文已失效')
+  const pat = await withPat()
+  return loadSourcePreview(pat, c.owner, c.repo, name, previewRef.value)
+}
+
+const commitVisible = ref(false)
+const commitDetail = ref<GithubCommitInfo | null>(null)
+
+async function openCommit(b: GitHubBranch) {
+  if (!ctx.value) return
+  commitVisible.value = true
+  commitDetail.value = null
+  const pat = await withPat()
+  const res = await getCommit(pat, ctx.value.owner, ctx.value.repo, b.commit.sha)
+  commitDetail.value = res.code === 200 ? res.data || null : null
+  if (res.code !== 200) ElMessage.error(`提交详情加载失败：${res.msg}`)
 }
 
 async function openProtect(row: GitHubBranch) {
@@ -470,5 +535,32 @@ onMounted(loadBranches)
   display: flex;
   gap: 10px;
   margin-bottom: 12px;
+}
+.m-link {
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.m-link:hover {
+  text-decoration: underline;
+}
+.body-pre {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.comment-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 8px 0 12px;
+  word-break: break-all;
+}
+.sub-title {
+  font-weight: 600;
+  margin: 12px 0 8px;
 }
 </style>
