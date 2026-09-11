@@ -173,7 +173,7 @@
               <template v-if="runFailed">
                 <div class="m-section-title">
                   <div class="err-head">
-                    <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
+                    <span>{{ logDisplayHint }}</span>
                     <div class="err-actions">
                       <van-button size="mini" :loading="refreshing" @click="refreshRunResult">刷新</van-button>
                       <van-button size="mini" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</van-button>
@@ -389,7 +389,7 @@
         <template v-if="runFailed">
           <div class="m-section-title">
 <div class="err-head">
-                <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
+                <span>{{ logDisplayHint }}</span>
                 <div class="err-actions">
                   <el-button size="small" :loading="refreshing" @click="refreshRunResult">刷新</el-button>
                   <el-button size="small" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</el-button>
@@ -456,6 +456,13 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+
+/** 异常/堆栈展示标题，随设置动态显示上限 */
+const logDisplayHint = computed(() =>
+  settings.config.logViewMode === 'chars'
+    ? `异常 / 堆栈信息（自动截取失败处，最多展示 ${logDisplayLimit()} 字符，完整日志可下载）`
+    : `异常 / 堆栈信息（自动截取失败处，最多展示 ${logDisplayLimit()} 行，完整日志可下载）`
+)
 
 /* ---------- 移动端辅助 ---------- */
 const wSheetVisible = ref(false)
@@ -853,15 +860,50 @@ const ERROR_ANCHOR_RE = /##\[error\]|^\s*(?:Error|ERROR)\s*:/i
 
 const DISPLAY_MAX = 600
 
+/** 异常/堆栈展示上限：设置项优先，缺省沿用 600 行 */
+function logDisplayLimit(): number {
+  const v = Number(settings.config.logViewLimit)
+  return Math.max(20, Number.isFinite(v) && v > 0 ? v : DISPLAY_MAX)
+}
+
 /** 展示/复制用的精简视图：锚定异常块（Gradle 的 FAILURE:/* What went wrong:、Node 的 Error: 栈等），
- *  保留完整错误与堆栈，只裁剪顶部无关的构建进度；省略部分提示可用“下载错误日志”取完整原文。 */
+ *  保留完整错误与堆栈，只裁剪顶部无关的构建进度；展示上限可在设置中按行/字符调整；
+ *  省略部分提示可用“下载错误日志”取完整原文。 */
 function errorDisplaySlice(lines: string[]): string {
   const full = lines.length
-  let start = lines.findIndex(l => BLOCK_INTRO_RE.test(l))
-  if (start < 0) start = lines.findIndex(l => ERROR_ANCHOR_RE.test(l))
-  if (start < 0) start = Math.max(0, full - 400)
-  if (full - start > DISPLAY_MAX) {
-    start = full - DISPLAY_MAX
+  const limit = logDisplayLimit()
+  const byChars = settings.config.logViewMode === 'chars'
+
+  // 失败锚点：优先从异常块开始展示
+  let anchor = lines.findIndex(l => BLOCK_INTRO_RE.test(l))
+  if (anchor < 0) anchor = lines.findIndex(l => ERROR_ANCHOR_RE.test(l))
+
+  if (byChars) {
+    const omittedLines = anchor > 0 ? anchor : 0
+    const base = anchor >= 0 ? lines.slice(anchor) : lines
+    let text = base.join('\n')
+    let omittedChars = 0
+    if (text.length > limit) {
+      let cut = text.length - limit
+      const nl = text.indexOf('\n', cut)
+      if (nl >= 0 && nl - cut < 200) cut = nl + 1
+      omittedChars = cut
+      text = text.slice(cut)
+    }
+    const headParts: string[] = []
+    if (omittedLines > 0) headParts.push(`上方 ${omittedLines} 行`)
+    if (omittedChars > 0) headParts.push(`前方约 ${omittedChars} 字符`)
+    const head = headParts.length
+      ? `…… ${headParts.join('、')}已省略（可在设置中调整展示上限），完整日志请点“下载错误日志” ………\n\n`
+      : ''
+    return head + text
+  }
+
+  // 按行：从尾部最多保留 limit 行，并在范围内重新寻找锚点
+  let start = anchor
+  if (start < 0) start = Math.max(0, full - limit)
+  if (full - start > limit) {
+    start = full - limit
     for (let i = start; i < full; i++) {
       if (BLOCK_INTRO_RE.test(lines[i]) || ERROR_ANCHOR_RE.test(lines[i])) {
         start = i
@@ -869,8 +911,9 @@ function errorDisplaySlice(lines: string[]): string {
       }
     }
   }
+  if (start < 0) start = 0
   const kept = lines.slice(start)
-  const head = start > 0 ? `…… 上方 ${start} 行构建进度已省略，完整日志请点“下载错误日志”查看 ………\n\n` : ''
+  const head = start > 0 ? `…… 上方 ${start} 行已省略（可在设置中调整展示上限），完整日志请点“下载错误日志” ………\n\n` : ''
   return head + kept.join('\n')
 }
 

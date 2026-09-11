@@ -9,6 +9,8 @@ import type { ThemeMode } from './useThemeStore'
 
 export type SyncIntervalMinutes = 1 | 5 | 10 | 30
 export type PageMode = 'single' | 'multi'
+/** 日志展示上限的计量方式：按行 / 按字符 */
+export type LogViewMode = 'lines' | 'chars'
 
 export interface SystemConfig {
   themeMode: ThemeMode
@@ -23,6 +25,10 @@ export interface SystemConfig {
   retryTimes: number
   showRowIndex: boolean
   logRetentionDays: number
+  /** 异常/堆栈日志展示上限计量方式 */
+  logViewMode: LogViewMode
+  /** 异常/堆栈日志展示上限数值（行数或字符数） */
+  logViewLimit: number
   backupPath: string
 }
 
@@ -43,6 +49,8 @@ export const DEFAULT_CONFIG: SystemConfig = {
   retryTimes: 2,
   showRowIndex: false,
   logRetentionDays: 90,
+  logViewMode: 'lines',
+  logViewLimit: 600,
   backupPath: ''
 }
 

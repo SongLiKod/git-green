@@ -38,6 +38,22 @@
         <el-input-number :model-value="config.logRetentionDays" :min="7" :max="3650" @update:model-value="(v: any) => settings.update({ logRetentionDays: v || 90 })" />
       </div>
       <div class="setting-row">
+        <div class="setting-row__label"><span>异常日志展示上限</span><span class="desc">Action 失败步骤的异常/堆栈信息最多展示多少（完整日志仍可下载），按行或按字符</span></div>
+        <div class="row-flex">
+          <el-select :model-value="config.logViewMode" style="width: 90px" @update:model-value="(v: any) => settings.update({ logViewMode: v as LogViewMode })">
+            <el-option label="按行" value="lines" />
+            <el-option label="按字符" value="chars" />
+          </el-select>
+          <el-input-number
+            :model-value="config.logViewLimit"
+            :min="20"
+            :max="config.logViewMode === 'chars' ? 200000 : 5000"
+            :step="config.logViewMode === 'chars' ? 500 : 50"
+            @update:model-value="(v: any) => settings.update({ logViewLimit: v || (config.logViewMode === 'chars' ? 20000 : 600) })"
+          />
+        </div>
+      </div>
+      <div class="setting-row">
         <div class="setting-row__label"><span>列表显示序号</span><span class="desc">在各列表首列显示行号（仓库 / 分支 / Action / Release / 文件 / 日志）</span></div>
         <el-switch :model-value="config.showRowIndex" @change="(v: any) => settings.update({ showRowIndex: !!v })" />
       </div>
@@ -240,7 +256,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Files, Grid, InfoFilled, Lock, Message, Monitor, Odometer, Setting, Sunny, WarningFilled } from '@element-plus/icons-vue'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { useSettingsStore, SYNC_INTERVAL_OPTIONS } from '@/stores/useSettingsStore'
-import type { SyncIntervalMinutes, PageMode } from '@/stores/useSettingsStore'
+import type { SyncIntervalMinutes, PageMode, LogViewMode } from '@/stores/useSettingsStore'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useLogStore } from '@/stores/useLogStore'
