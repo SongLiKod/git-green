@@ -1,6 +1,25 @@
 ﻿<template>
   <div class="page">
     <template v-if="repo">
+      <el-card shadow="never" class="clone-card mb14">
+        <template #header>克隆地址</template>
+        <div class="clone-row">
+          <span class="clone-label">HTTPS</span>
+          <el-input :model-value="cloneUrls.https" readonly />
+          <el-button @click="copyClone(cloneUrls.https)">复制</el-button>
+        </div>
+        <div class="clone-row">
+          <span class="clone-label">SSH</span>
+          <el-input :model-value="cloneUrls.ssh" readonly />
+          <el-button @click="copyClone(cloneUrls.ssh)">复制</el-button>
+        </div>
+        <div v-if="hasCustomHost" class="clone-row">
+          <span class="clone-label">默认SSH</span>
+          <el-input :model-value="defaultSshUrl" readonly />
+          <el-button @click="copyClone(defaultSshUrl)">复制</el-button>
+        </div>
+        <div class="form-tip" style="margin-top: 8px">SSH 使用账号自定义主机（账号管理里可修改）；配置了自定义主机时才额外展示 默认SSH 地址</div>
+      </el-card>
       <el-row :gutter="14">
         <el-col :span="12">
           <el-card shadow="never" class="mb14">
@@ -135,6 +154,31 @@ const repo = computed(() => repoStore.currentRepo)
 const saving = ref(false)
 const branches = ref<GitHubBranch[]>([])
 const collaborators = ref<Collaborator[]>([])
+
+const currentSshHost = computed(
+  () => accountStore.accounts.find(a => a.id === repoStore.currentAccountId)?.sshHost?.trim() || 'github.com'
+)
+const hasCustomHost = computed(() => currentSshHost.value !== 'github.com')
+const cloneUrls = computed(() => {
+  const r = repo.value
+  return {
+    https: r ? `https://github.com/${r.full_name}.git` : '',
+    ssh: r ? `git@${currentSshHost.value}:${r.full_name}.git` : ''
+  }
+})
+const defaultSshUrl = computed(() => (repo.value ? `git@github.com:${repo.value.full_name}.git` : ''))
+
+function copyClone(text: string) {
+  if (!text) return
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => ElMessage.success('已复制克隆地址'),
+      () => ElMessage.warning('复制失败，请手动复制')
+    )
+  } else {
+    ElMessage.warning('复制失败，请手动复制')
+  }
+}
 
 const basic = reactive({ name: '', description: '', homepage: '' })
 const features = reactive({
@@ -385,5 +429,20 @@ onMounted(loadAll)
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
+}
+.clone-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.clone-row .el-input {
+  flex: 1;
+}
+.clone-label {
+  width: 70px;
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 </style>

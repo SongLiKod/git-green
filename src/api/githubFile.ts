@@ -30,7 +30,11 @@ export async function getFileTree(
     | { name: string; path: string; type: string; size: number; sha: string }[]
     | { name: string; path: string; type: string; size: number; sha: string }
   >
-  if (res.code !== 200 || !res.data) return { code: res.code, msg: res.msg }
+  if (res.code !== 200 || !res.data) {
+    // 新建的空仓库（无任何提交）Contents API 会返回 "This repository is empty."，按空目录处理
+    if (/\bempty\b/i.test(res.msg || '')) return { code: 200, msg: 'success', data: [] }
+    return { code: res.code, msg: res.msg }
+  }
   const items = Array.isArray(res.data) ? res.data : [res.data]
   const entries: FileEntry[] = items.map(item => ({
     name: item.name,
