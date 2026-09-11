@@ -1,7 +1,7 @@
 {
   "name": "gitgreen",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "GitGreen 纯前端三端多GitHub账号一站式管理工具",
   "author": "GitGreen",
   "main": "electron/main.cjs",
