@@ -175,6 +175,7 @@
                   <div class="err-head">
                     <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
                     <div class="err-actions">
+                      <van-button size="mini" :loading="refreshing" @click="refreshRunResult">刷新</van-button>
                       <van-button size="mini" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</van-button>
                       <van-button size="mini" type="danger" plain :disabled="!runErrors" @click="copyRunErrors">一键复制</van-button>
                     </div>
@@ -387,13 +388,14 @@
         </el-table>
         <template v-if="runFailed">
           <div class="m-section-title">
-            <div class="err-head">
-              <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
-              <div class="err-actions">
-                <el-button size="small" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</el-button>
-                <el-button size="small" type="danger" plain :disabled="!runErrors" @click="copyRunErrors">一键复制</el-button>
+<div class="err-head">
+                <span>异常 / 堆栈信息（自动截取失败处，完整日志可下载）</span>
+                <div class="err-actions">
+                  <el-button size="small" :loading="refreshing" @click="refreshRunResult">刷新</el-button>
+                  <el-button size="small" type="primary" plain :disabled="!runErrorRaw" @click="downloadErrorLog">下载错误日志</el-button>
+                  <el-button size="small" type="danger" plain :disabled="!runErrors" @click="copyRunErrors">一键复制</el-button>
+                </div>
               </div>
-            </div>
           </div>
           <pre v-if="runErrors" class="error-box">{{ runErrors }}</pre>
           <el-empty v-else description="未从日志中提取到异常信息" :image-size="60" />
@@ -766,6 +768,7 @@ async function submitTrigger() {
 const resultVisible = ref(false)
 const resultRun = ref<WorkflowRun | null>(null)
 const resultLoading = ref(false)
+const refreshing = ref(false)
 const runArtifacts = ref<RunArtifact[]>([])
 const annotations = ref<{ check: string; item: CheckRunAnnotation }[]>([])
 const runErrors = ref('')
@@ -787,12 +790,19 @@ async function openRunResult(row: WorkflowRun) {
   if (!ctx.value) return
   resultRun.value = row
   resultVisible.value = true
+  resultLoading.value = true
   runArtifacts.value = []
   annotations.value = []
   runErrors.value = ''
   runErrorRaw.value = ''
   runFailed.value = row.status === 'completed' && !!row.conclusion && !['success', 'cancelled', 'skipped', 'neutral'].includes(row.conclusion)
-  resultLoading.value = true
+  await loadRunResult()
+}
+
+/** 加载产物 / 注释 / 异常堆栈（打开与刷新共用） */
+async function loadRunResult() {
+  if (!ctx.value || !resultRun.value) return
+  const row = resultRun.value
   const pat = await withPat()
   const [ar, jr] = await Promise.all([
     listRunArtifacts(pat, ctx.value.owner, ctx.value.repo, row.id),
@@ -822,6 +832,17 @@ async function openRunResult(row: WorkflowRun) {
     }
   }
   resultLoading.value = false
+}
+
+async function refreshRunResult() {
+  if (!ctx.value || !resultRun.value || refreshing.value) return
+  refreshing.value = true
+  try {
+    await loadRunResult()
+    ElMessage.success('已刷新')
+  } finally {
+    refreshing.value = false
+  }
 }
 
 const TS_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/

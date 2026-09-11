@@ -95,6 +95,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
   // Windows客户端「无跨域限制」：为GitHub资产下载跳转域名注入CORS响应头
+  // 注意：目标域若已自带 Access-Control-Allow-Origin（如 Actions 日志所在的
+  // *.blob.core.windows.net 存储会返回自身的 "*"），则禁止再注入，
+  // 否则 Electron 会与原有响应头合并成多值 "*, *"，触发 CORS 拦截。
   session.defaultSession.webRequest.onHeadersReceived(
     {
       urls: [
@@ -107,9 +110,14 @@ app.whenReady().then(() => {
     },
     (details, callback) => {
       const headers = details.responseHeaders || {}
-      headers['access-control-allow-origin'] = ['*']
-      headers['access-control-allow-headers'] = ['*']
-      callback({ responseHeaders: headers })
+      const merged = { ...headers }
+      const hasCorsOrigin = Object.keys(merged).some(k => k.toLowerCase() === 'access-control-allow-origin')
+      if (hasCorsOrigin) {
+        return callback({ responseHeaders: merged })
+      }
+      merged['access-control-allow-origin'] = ['*']
+      merged['access-control-allow-headers'] = ['*']
+      callback({ responseHeaders: merged })
     }
   )
 
