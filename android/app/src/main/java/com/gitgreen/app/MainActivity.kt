@@ -1,11 +1,15 @@
 package com.gitgreen.app
 
+import android.app.Activity
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewAssetLoader
@@ -20,6 +24,10 @@ import org.json.JSONObject
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+
+    /** 文件选择回调（供 <input type="file"> 导入配置 / 还原备份使用） */
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserRequestCode = 1001
 
     /** 注入给前端的原生桥接对象（window.AndroidBridge） */
     inner class NativeBridge {
@@ -75,6 +83,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 处理网页中的 <input type="file">，调起系统文件选择器
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                webView: WebView?,
+                callback: ValueCallback<Array<Uri>>?,
+                params: FileChooserParams?
+            ): Boolean {
+                filePathCallback?.onReceiveValue(null)
+                filePathCallback = callback
+                return try {
+                    startActivityForResult(params?.createIntent(), fileChooserRequestCode)
+                    true
+                } catch (e: Exception) {
+                    filePathCallback = null
+                    false
+                }
+            }
+        }
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -91,5 +118,20 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (webView.canGoBack()) webView.goBack() else @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == fileChooserRequestCode) {
+            val result =
+                if (resultCode == Activity.RESULT_OK && data != null)
+                    WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+                else null
+            filePathCallback?.onReceiveValue(result)
+            filePathCallback = null
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
     }
 }

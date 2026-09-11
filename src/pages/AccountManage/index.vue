@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <input ref="fileInput" type="file" accept=".json" style="display: none" @change="onImportFile" />
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <div class="m-toolbar">
@@ -146,7 +147,6 @@
       <el-button :loading="accountStore.checking" @click="accountStore.checkAll()">检测全部状态</el-button>
       <el-button @click="accountStore.exportConfig()">导出账号配置</el-button>
       <el-button @click="fileInput?.click()">导入账号配置</el-button>
-      <input ref="fileInput" type="file" accept=".json" style="display: none" @change="onImportFile" />
     </div>
 
     <el-table :data="accountStore.accounts" border stripe>
