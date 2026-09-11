@@ -23,7 +23,7 @@
           <div v-if="i.labels.length" class="m-tags">
             <van-tag v-for="l in i.labels" :key="l.id" :color="labelColor(l.name)" plain class="tag-no-bg">{{ l.name }}</van-tag>
           </div>
-          <div class="m-sub" style="margin-top: 6px">💬 {{ i.comments }}</div>
+          <div class="m-sub" style="margin-top: 6px">💬 {{ i.comments }}<template v-if="linkedMap[i.number]"> · <van-tag type="primary" plain @click.stop="openLinkedCommit(i.number)">🔗 #{{ shortSha(linkedMap[i.number].sha) }}</van-tag></template></div>
         </div>
 
         <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
@@ -147,6 +147,11 @@
           <el-table-column label="评论" width="70">
             <template #default="{ row }">{{ row.comments }}</template>
           </el-table-column>
+          <el-table-column label="关联提交" width="120">
+            <template #default="{ row }">
+              <el-link v-if="linkedMap[row.number]" type="primary" :title="`${linkedMap[row.number].sha} · ${new Date(linkedMap[row.number].at).toLocaleString()}`" @click="openLinkedCommit(row.number)">#{{ shortSha(linkedMap[row.number].sha) }}</el-link>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="230" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row)">详情/评论</el-button>
@@ -267,7 +272,7 @@ import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { listIssues, getIssue, createIssue, setIssueState, updateIssue, listComments, commentIssue, listIssueTimeline, getCommit, listLabels, deleteLabel } from '@/api/githubIssue'
-import type { GitHubIssue, IssueComment, GithubCommitInfo } from '@/api/githubIssue'
+import type { GitHubIssue, IssueComment, GithubCommitInfo, IssueTimelineEvent } from '@/api/githubIssue'
 import type { ApiResult } from '@/api/request'
 import { useIsMobile } from '@/utils/platform'
 import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
@@ -306,6 +311,9 @@ const editForm = reactive({ title: '', body: '', labels: [] as string[] })
 
 /** 当前仓库已用标签名（新建/编辑标签多选用） */
 const labels = ref<string[]>([])
+
+/** 各 issue 关联的最新提交：number -> { sha, at } */
+const linkedMap = ref<Record<number, { sha: string; at: string }>>({})
 
 /** 移动端标签用逗号文本绑定（数组 ↔ 文本互转） */
 const createLabelsText = computed({
@@ -375,6 +383,32 @@ async function loadIssues() {
   else ElMessage.error(`Issue加载失败：${res.msg}`)
   const lRes = await listLabels(pat, ctx.value.owner, ctx.value.repo)
   if (lRes.code === 200) labels.value = (lRes.data || []).map(l => l.name)
+  loadLinkedCommits()
+}
+
+/** 拉取每个 issue 时间线，取最新的关联提交短 SHA */
+async function loadLinkedCommits() {
+  const c = ctx.value
+  if (!c) return
+  const pat = await withPat()
+  const map: Record<number, { sha: string; at: string }> = {}
+  const results = await Promise.all(
+    issues.value.map(it =>
+      listIssueTimeline(pat, c.owner, c.repo, it.number)
+        .then(res => ({ num: it.number, res }))
+        .catch(() => ({ num: it.number, res: { code: 500, msg: '' } as ApiResult }))
+    )
+  )
+  for (const { num, res } of results) {
+    if (res.code !== 200 || !Array.isArray(res.data) || !res.data.length) continue
+    const events = (res.data as IssueTimelineEvent[]).filter(
+      e => (e.event === 'referenced' || e.event === 'committed') && e.commit_id && e.created_at
+    )
+    if (!events.length) continue
+    events.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    map[num] = { sha: events[0].commit_id as string, at: events[0].created_at }
+  }
+  linkedMap.value = map
 }
 
 async function openDetail(row: GitHubIssue) {
@@ -430,6 +464,21 @@ function shortSha(sha: string): string {
 const commitVisible = ref(false)
 const commitDetail = ref<GithubCommitInfo | null>(null)
 const commitFs = ref(false)
+
+/** 点击列表里的关联提交，打开与详情处一致的提交详情弹窗 */
+async function openLinkedCommit(num: number) {
+  const c = ctx.value
+  const item = linkedMap.value[num]
+  if (!c || !item) return
+  const pat = await withPat()
+  const res = await getCommit(pat, c.owner, c.repo, item.sha)
+  if (res.code === 200 && res.data) {
+    commitDetail.value = res.data
+    commitVisible.value = true
+  } else {
+    ElMessage.error(`提交详情获取失败：${res.msg}`)
+  }
+}
 
 function openCommit(c: GithubCommitInfo) {
   commitDetail.value = c
