@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback?.onReceiveValue(null)
                 filePathCallback = callback
                 return try {
-                    startActivityForResult(params?.createIntent(), fileChooserRequestCode)
+                    this@MainActivity.startActivityForResult(params?.createIntent(), fileChooserRequestCode)
                     true
                 } catch (e: Exception) {
                     filePathCallback = null
