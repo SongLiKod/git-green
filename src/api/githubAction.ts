@@ -20,7 +20,7 @@ export interface WorkflowRun {
   status: 'queued' | 'in_progress' | 'completed' | string
   conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'neutral' | 'timed_out' | 'action_required' | null
   event: string
-  branch: string
+  head_branch: string
   head_sha: string
   run_number: number
   created_at: string
