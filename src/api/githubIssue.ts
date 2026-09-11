@@ -1,4 +1,4 @@
-import service, { auth, type ApiResult } from './request'
+import service, { auth, encPath, type ApiResult } from './request'
 
 export interface IssueLabel {
   id: number
@@ -54,6 +54,28 @@ export function getIssue(token: string, owner: string, repo: string, num: number
   return service.get(`/repos/${owner}/${repo}/issues/${num}`, { headers: auth(token) }) as unknown as Promise<
     ApiResult<GitHubIssue>
   >
+}
+
+export interface RepoLabel {
+  id: number
+  node_id?: string
+  name: string
+  color: string
+  description: string | null
+}
+
+/** 仓库现有标签（新建/编辑 Issue 时选标签用） */
+export function listLabels(token: string, owner: string, repo: string): Promise<ApiResult<RepoLabel[]>> {
+  return service.get(`/repos/${owner}/${repo}/labels?per_page=100`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<RepoLabel[]>>
+}
+
+/** 删除仓库标签（需写权限） */
+export function deleteLabel(token: string, owner: string, repo: string, name: string): Promise<ApiResult> {
+  return service.delete(`/repos/${owner}/${repo}/labels/${encPath(name)}`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult>
 }
 
 /** 新建 Issue */

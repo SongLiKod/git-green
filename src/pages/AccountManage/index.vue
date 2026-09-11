@@ -246,9 +246,7 @@
           <div class="form-tip">SSH克隆地址使用：git@&lt;主机&gt;:owner/repo.git，默认 github.com</div>
         </el-form-item>
         <el-form-item label="标签">
-          <el-select v-model="form.tags" multiple filterable allow-create default-first-option placeholder="输入后回车创建标签" style="width: 100%">
-            <el-option v-for="t in knownTags" :key="t" :label="t" :value="t" />
-          </el-select>
+          <LabelSelect v-model="form.tags" :options="tagOptions" placeholder="输入后回车创建标签" @remove="removeKnownTag" />
         </el-form-item>
         <el-form-item label="分组">
           <el-select v-model="form.group" filterable allow-create default-first-option placeholder="输入后回车创建分组" style="width: 100%">
@@ -279,9 +277,7 @@
           <div class="form-tip">SSH克隆地址使用：git@&lt;主机&gt;:owner/repo.git</div>
         </el-form-item>
         <el-form-item label="标签">
-          <el-select v-model="editForm.tags" multiple filterable allow-create default-first-option style="width: 100%">
-            <el-option v-for="t in knownTags" :key="t" :label="t" :value="t" />
-          </el-select>
+          <LabelSelect v-model="editForm.tags" :options="tagOptions" placeholder="输入后回车创建标签" @remove="removeKnownTag" />
         </el-form-item>
         <el-form-item label="分组">
           <el-select v-model="editForm.group" filterable allow-create default-first-option style="width: 100%">
@@ -367,6 +363,7 @@ import { useIsMobile } from '@/utils/platform'
 import type { GitHubAccount } from '@/api/githubAccount'
 import { listSshKeys, createSshKey, deleteSshKey } from '@/api/githubSsh'
 import type { SshKey } from '@/api/githubSsh'
+import LabelSelect from '@/components/LabelSelect.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -374,7 +371,6 @@ const settings = useSettingsStore()
 const isMobile = useIsMobile()
 
 const tagsText = ref('')
-const editTagsText = ref('')
 
 function switchUse(id: string) {
   accountStore.switchAccount(id)
@@ -389,6 +385,12 @@ const form = reactive({ pat: '', remark: '', tags: [] as string[], group: '', ss
 const editVisible = ref(false)
 const editTarget = ref<GitHubAccount | null>(null)
 const editForm = reactive({ remark: '', tags: [] as string[], group: '', sshHost: '', pat: '' })
+
+/** 移动端编辑弹窗标签文本绑定（editForm.tags 数组 ↔ 逗号文本互转） */
+const editTagsText = computed({
+  get: () => editForm.tags.join(','),
+  set: (v: string) => (editForm.tags = v.split(/[,，]/).map(s => s.trim()).filter(Boolean))
+})
 
 const applyVisible = ref(false)
 const applyForm = reactive({ type: 'classic', scopes: ['repo', 'workflow', 'read:user'] as string[], note: 'GitGreen' })
@@ -421,6 +423,18 @@ function copyApplyUrl() {
 
 const knownTags = computed(() => Array.from(new Set(accountStore.accounts.flatMap(a => a.tags))))
 const knownGroups = computed(() => Array.from(new Set(accountStore.accounts.map(a => a.group).filter(Boolean))))
+
+/** 标签建议列表（可删除其中标签以不再出现在建议里） */
+const tagOptions = ref<string[]>([])
+watch(knownTags, v => {
+  tagOptions.value = [...v]
+}, { immediate: true })
+
+function removeKnownTag(name: string) {
+  tagOptions.value = tagOptions.value.filter(t => t !== name)
+  form.tags = form.tags.filter(t => t !== name)
+  editForm.tags = editForm.tags.filter(t => t !== name)
+}
 
 const sshKeys = ref<SshKey[]>([])
 const sshLoading = ref(false)
@@ -514,15 +528,12 @@ function openEdit(row: GitHubAccount) {
   editForm.group = row.group
   editForm.sshHost = row.sshHost && row.sshHost.trim() !== 'github.com' ? row.sshHost : ''
   editForm.pat = ''
-  editTagsText.value = row.tags.join(',')
   editVisible.value = true
 }
 
 async function submitEdit() {
   if (!editTarget.value) return
-  const tags = editTagsText.value
-    ? editTagsText.value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
-    : editForm.tags
+  const tags = [...editForm.tags]
   if (editForm.pat.trim()) {
     const ok = await accountStore.updatePat(editTarget.value.id, editForm.pat)
     if (!ok) return

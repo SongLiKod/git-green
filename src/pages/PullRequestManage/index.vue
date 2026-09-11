@@ -28,15 +28,15 @@
           <div class="m-popup" v-if="detail">
             <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
             <div class="m-sub">{{ detail.head.ref }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
-            <pre class="m-code" style="max-height: 18vh">{{ detail.body || '（无描述）' }}</pre>
+            <div class="m-md-body"><MdRender :source="detail.body" empty-text="（无描述）" /></div>
             <div class="m-section-title" style="margin-left: 0">变更文件（{{ files.length }}）</div>
             <FileDiffList :files="files" @preview="openFilePreview" />
             <div class="m-section-title" style="margin-left: 0">评论（{{ comments.length }}）</div>
             <div v-for="c in comments" :key="c.id" class="m-card" style="margin: 0 0 8px">
               <div class="m-sub">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
-              <pre class="m-code" style="max-height: none; border: none; padding: 6px 0">{{ c.body }}</pre>
+              <MdRender :source="c.body" class="comment-render" />
             </div>
-            <van-field v-model="newComment" type="textarea" rows="2" placeholder="写评论..." />
+            <MdEditor v-model="newComment" placeholder="写评论...（支持 Markdown）" @submit="submitComment" />
             <div class="m-actions">
               <van-button size="small" type="primary" plain :loading="saving" @click="submitComment">评论</van-button>
               <template v-if="detail.state === 'open'">
@@ -49,12 +49,16 @@
           </div>
         </van-popup>
 
-        <van-popup v-model:show="createVisible" position="bottom" round>
-          <div class="m-popup">
-            <div class="m-popup-title">新建 Pull Request</div>
+        <van-popup v-model:show="createVisible" position="bottom" round :style="{ height: createFs ? '100%' : '' }">
+          <div class="m-popup" :class="{ 'm-popup-fill': createFs }">
+            <div class="m-popup-title-row">
+              <span class="m-popup-title">新建 Pull Request</span>
+              <van-button size="mini" plain @click="createFs = !createFs">{{ createFs ? '退出全屏' : '全屏' }}</van-button>
+            </div>
             <van-cell-group inset>
               <van-field v-model="createForm.title" label="标题" required />
-              <van-field v-model="createForm.body" label="描述" type="textarea" rows="3" />
+              <van-cell title="描述" />
+              <div class="m-md-cell"><MdEditor v-model="createForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="createFs" /></div>
               <van-field :model-value="createForm.base" label="base" placeholder="目标分支" readonly is-link @click="openPicker('base')" />
               <van-field :model-value="createForm.head" label="head" placeholder="来源分支" readonly is-link @click="openPicker('head')" />
               <van-cell title="草稿"><template #value><van-switch v-model="createForm.draft" size="20" /></template></van-cell>
@@ -113,15 +117,15 @@
         <el-dialog v-model="detailVisible" :title="detail ? `#${detail.number} ${detail.title}` : ''" width="720px" top="5vh">
           <template v-if="detail">
             <div class="pr-meta">{{ detail.head.ref }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
-            <pre class="body-pre">{{ detail.body || '（无描述）' }}</pre>
+            <MdRender :source="detail.body" empty-text="（无描述）" class="body-render" />
             <div class="sub-title">变更文件（{{ files.length }}）</div>
             <FileDiffList :files="files" @preview="openFilePreview" />
             <div class="sub-title">评论（{{ comments.length }}）</div>
             <div v-for="c in comments" :key="c.id" class="comment-item">
               <div class="comment-head">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
-              <pre class="comment-body">{{ c.body }}</pre>
+              <MdRender :source="c.body" class="comment-render" />
             </div>
-            <el-input v-model="newComment" type="textarea" :rows="3" placeholder="写评论..." />
+            <MdEditor v-model="newComment" placeholder="写评论...（支持 Markdown）" @submit="submitComment" />
             <div class="footer-actions">
               <el-button type="primary" plain :loading="saving" @click="submitComment">发表评论</el-button>
               <template v-if="detail.state === 'open'">
@@ -139,10 +143,19 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="createVisible" title="新建 Pull Request" width="560px">
+        <el-dialog v-model="createVisible" width="640px" :fullscreen="createFs" :show-close="false" class="form-dialog">
+          <template #header>
+            <div class="dialog-header">
+              <span class="dialog-header-title">新建 Pull Request</span>
+              <span class="dialog-header-ops">
+                <el-button link type="primary" @click="createFs = !createFs">{{ createFs ? '退出全屏' : '全屏' }}</el-button>
+                <el-button link @click="createVisible = false">关闭</el-button>
+              </span>
+            </div>
+          </template>
           <el-form label-width="70px">
             <el-form-item label="标题" required><el-input v-model="createForm.title" /></el-form-item>
-            <el-form-item label="描述"><el-input v-model="createForm.body" type="textarea" :rows="4" /></el-form-item>
+            <el-form-item label="描述" class="md-fill-item"><MdEditor v-model="createForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="createFs" /></el-form-item>
             <el-form-item label="base分支">
               <el-select v-model="createForm.base" filterable style="width: 100%">
                 <el-option v-for="b in branchNames" :key="b" :label="b" :value="b" />
@@ -186,6 +199,8 @@ import { getCollaborators } from '@/api/githubRepo'
 import { useIsMobile } from '@/utils/platform'
 import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
 import SourceFilePreview, { loadSourcePreview } from '@/components/SourceFilePreview.vue'
+import MdEditor from '@/components/MdEditor.vue'
+import MdRender from '@/components/MdRender.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -209,6 +224,7 @@ const newComment = ref('')
 const mergeMethod = ref<'merge' | 'squash' | 'rebase'>('merge')
 
 const createVisible = ref(false)
+const createFs = ref(false)
 const createForm = reactive({ title: '', body: '', base: '', head: '', draft: false })
 
 const mergeVisible = ref(false)
@@ -516,6 +532,45 @@ onMounted(() => {
   white-space: pre-wrap;
   font-size: 13px;
 }
+.body-render {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 13px;
+}
+.comment-render {
+  margin-top: 6px;
+}
+.m-md-body {
+  margin: 8px 12px;
+}
+.m-md-cell {
+  margin: 8px 12px;
+}
+.m-popup.m-popup-fill {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+.m-popup.m-popup-fill .van-cell-group {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.m-popup.m-popup-fill .m-md-cell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+}
 .sub-title {
   font-weight: 600;
   margin: 12px 0 8px;
@@ -539,5 +594,72 @@ onMounted(() => {
   flex-wrap: wrap;
   margin-top: 12px;
   align-items: center;
+}
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.dialog-header-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dialog-header-ops {
+  display: flex;
+  flex: none;
+}
+.m-popup-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.m-popup-title-row :deep(.m-popup-title) {
+  margin: 0;
+  flex: 1;
+  text-align: left;
+}
+</style>
+
+<style>
+.form-dialog .el-dialog__body {
+  max-height: calc(100vh - 150px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.form-dialog.is-fullscreen .el-dialog__body {
+  max-height: none;
+  height: calc(100vh - 110px);
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.form-dialog.is-fullscreen .el-form {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.form-dialog.is-fullscreen .el-form-item.md-fill-item {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+.form-dialog.is-fullscreen .el-form-item.md-fill-item .el-form-item__content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 </style>

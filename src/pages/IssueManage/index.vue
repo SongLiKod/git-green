@@ -29,7 +29,7 @@
         <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
           <div class="m-popup" v-if="detail">
             <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
-            <pre class="m-code" style="max-height: 20vh">{{ detail.body || '（无描述）' }}</pre>
+            <div class="m-md-body"><MdRender :source="detail.body" empty-text="（无描述）" /></div>
             <div class="m-actions">
               <van-button size="small" type="primary" plain @click="openEdit(detail)">编辑</van-button>
               <van-button v-if="detail.state === 'open'" size="small" type="warning" plain @click="toggleState(detail)">关闭</van-button>
@@ -46,9 +46,9 @@
             <div class="m-section-title" style="margin-left: 0">评论（{{ comments.length }}）</div>
             <div v-for="c in comments" :key="c.id" class="m-card" style="margin: 0 0 8px">
               <div class="m-sub">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
-              <pre class="m-code" style="max-height: none; border: none; padding: 6px 0">{{ c.body }}</pre>
+              <MdRender :source="c.body" class="comment-render" />
             </div>
-            <van-field v-model="newComment" type="textarea" rows="2" placeholder="写评论..." />
+            <MdEditor v-model="newComment" placeholder="写评论...（支持 Markdown）" @submit="submitComment" />
             <van-button block type="primary" style="margin-top: 10px" :loading="saving" @click="submitComment">发表评论</van-button>
           </div>
         </van-popup>
@@ -74,25 +74,33 @@
           </div>
         </van-popup>
 
-        <van-popup v-model:show="createVisible" position="bottom" round>
-          <div class="m-popup">
-            <div class="m-popup-title">新建 Issue</div>
+        <van-popup v-model:show="createVisible" position="bottom" round :style="{ height: createFs ? '100%' : '' }">
+          <div class="m-popup" :class="{ 'm-popup-fill': createFs }">
+            <div class="m-popup-title-row">
+              <span class="m-popup-title">新建 Issue</span>
+              <van-button size="mini" plain @click="createFs = !createFs">{{ createFs ? '退出全屏' : '全屏' }}</van-button>
+            </div>
             <van-cell-group inset>
               <van-field v-model="createForm.title" label="标题" required />
-              <van-field v-model="createForm.body" label="描述" type="textarea" rows="4" />
-              <van-field v-model="createForm.labels" label="标签" placeholder="多个用逗号分隔" />
+              <van-cell title="描述" />
+              <div class="m-md-cell"><MdEditor v-model="createForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="createFs" /></div>
+              <van-field v-model="createLabelsText" label="标签" placeholder="多个用逗号分隔" />
             </van-cell-group>
             <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitCreate">创建</van-button>
           </div>
         </van-popup>
 
-        <van-popup v-model:show="editVisible" position="bottom" round>
-          <div class="m-popup">
-            <div class="m-popup-title">编辑 Issue #{{ editTarget?.number || '' }}</div>
+        <van-popup v-model:show="editVisible" position="bottom" round :style="{ height: editFs ? '100%' : '' }">
+          <div class="m-popup" :class="{ 'm-popup-fill': editFs }">
+            <div class="m-popup-title-row">
+              <span class="m-popup-title">编辑 Issue #{{ editTarget?.number || '' }}</span>
+              <van-button size="mini" plain @click="editFs = !editFs">{{ editFs ? '退出全屏' : '全屏' }}</van-button>
+            </div>
             <van-cell-group inset>
               <van-field v-model="editForm.title" label="标题" required />
-              <van-field v-model="editForm.body" label="描述" type="textarea" rows="4" />
-              <van-field v-model="editForm.labels" label="标签" placeholder="多个用逗号分隔" />
+              <van-cell title="描述" />
+              <div class="m-md-cell"><MdEditor v-model="editForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="editFs" /></div>
+              <van-field v-model="editLabelsText" label="标签" placeholder="多个用逗号分隔" />
             </van-cell-group>
             <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitEdit">保存</van-button>
           </div>
@@ -151,7 +159,7 @@
 
         <el-dialog v-model="detailVisible" :title="detail ? `#${detail.number} ${detail.title}` : ''" width="680px" top="6vh">
           <template v-if="detail">
-            <pre class="body-pre">{{ detail.body || '（无描述）' }}</pre>
+            <MdRender :source="detail.body" empty-text="（无描述）" class="body-render" />
             <div class="sub-title">关联提交（{{ linkedLoading ? '加载中...' : linkedCommits.length }}）</div>
             <div v-if="linkedLoading" class="comment-body"><el-icon class="is-loading"><Loading /></el-icon> 正在加载关联提交...</div>
             <div v-else-if="linkedCommits.length === 0" class="comment-body">暂无直接关联提交（提交信息里引用 #{{ detail.number }} 的提交会显示在这里）</div>
@@ -165,18 +173,27 @@
             <div class="sub-title">评论（{{ comments.length }}）</div>
             <div v-for="c in comments" :key="c.id" class="comment-item">
               <div class="comment-head">{{ c.user?.login }} · {{ new Date(c.created_at).toLocaleString() }}</div>
-              <pre class="comment-body">{{ c.body }}</pre>
+              <MdRender :source="c.body" class="comment-render" />
             </div>
-            <el-input v-model="newComment" type="textarea" :rows="3" placeholder="写评论..." />
+            <MdEditor v-model="newComment" placeholder="写评论...（支持 Markdown）" @submit="submitComment" />
             <el-button type="primary" style="margin-top: 10px" :loading="saving" @click="submitComment">发表评论</el-button>
           </template>
         </el-dialog>
 
-        <el-dialog v-model="createVisible" title="新建 Issue" width="520px">
+        <el-dialog v-model="createVisible" width="640px" :fullscreen="createFs" :show-close="false" class="form-dialog">
+          <template #header>
+            <div class="dialog-header">
+              <span class="dialog-header-title">新建 Issue</span>
+              <span class="dialog-header-ops">
+                <el-button link type="primary" @click="createFs = !createFs">{{ createFs ? '退出全屏' : '全屏' }}</el-button>
+                <el-button link @click="createVisible = false">关闭</el-button>
+              </span>
+            </div>
+          </template>
           <el-form label-width="60px">
             <el-form-item label="标题" required><el-input v-model="createForm.title" /></el-form-item>
-            <el-form-item label="描述"><el-input v-model="createForm.body" type="textarea" :rows="5" /></el-form-item>
-            <el-form-item label="标签"><el-input v-model="createForm.labels" placeholder="多个用逗号分隔" /></el-form-item>
+            <el-form-item label="描述" class="md-fill-item"><MdEditor v-model="createForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="createFs" /></el-form-item>
+            <el-form-item label="标签"><LabelSelect v-model="createForm.labels" :options="labels" @remove="removeLabel" /></el-form-item>
           </el-form>
           <template #footer>
             <el-button @click="createVisible = false">取消</el-button>
@@ -184,11 +201,20 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="editVisible" :title="`编辑 Issue #${editTarget?.number || ''}`" width="520px">
+        <el-dialog v-model="editVisible" width="640px" :fullscreen="editFs" :show-close="false" class="form-dialog">
+          <template #header>
+            <div class="dialog-header">
+              <span class="dialog-header-title">编辑 Issue #{{ editTarget?.number || '' }}</span>
+              <span class="dialog-header-ops">
+                <el-button link type="primary" @click="editFs = !editFs">{{ editFs ? '退出全屏' : '全屏' }}</el-button>
+                <el-button link @click="editVisible = false">关闭</el-button>
+              </span>
+            </div>
+          </template>
           <el-form label-width="60px">
             <el-form-item label="标题" required><el-input v-model="editForm.title" /></el-form-item>
-            <el-form-item label="描述"><el-input v-model="editForm.body" type="textarea" :rows="5" /></el-form-item>
-            <el-form-item label="标签"><el-input v-model="editForm.labels" placeholder="多个用逗号分隔" /></el-form-item>
+            <el-form-item label="描述" class="md-fill-item"><MdEditor v-model="editForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="editFs" /></el-form-item>
+            <el-form-item label="标签"><LabelSelect v-model="editForm.labels" :options="labels" @remove="removeLabel" /></el-form-item>
           </el-form>
 <template #footer>
           <el-button @click="editVisible = false">取消</el-button>
@@ -240,12 +266,15 @@ import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
-import { listIssues, getIssue, createIssue, setIssueState, updateIssue, listComments, commentIssue, listIssueTimeline, getCommit } from '@/api/githubIssue'
+import { listIssues, getIssue, createIssue, setIssueState, updateIssue, listComments, commentIssue, listIssueTimeline, getCommit, listLabels, deleteLabel } from '@/api/githubIssue'
 import type { GitHubIssue, IssueComment, GithubCommitInfo } from '@/api/githubIssue'
 import type { ApiResult } from '@/api/request'
 import { useIsMobile } from '@/utils/platform'
 import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
 import SourceFilePreview, { loadSourcePreview } from '@/components/SourceFilePreview.vue'
+import MdEditor from '@/components/MdEditor.vue'
+import MdRender from '@/components/MdRender.vue'
+import LabelSelect from '@/components/LabelSelect.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -267,11 +296,26 @@ const linkedCommits = ref<GithubCommitInfo[]>([])
 const linkedLoading = ref(false)
 
 const createVisible = ref(false)
-const createForm = reactive({ title: '', body: '', labels: '' })
+const createFs = ref(false)
+const createForm = reactive({ title: '', body: '', labels: [] as string[] })
 
 const editVisible = ref(false)
+const editFs = ref(false)
 const editTarget = ref<GitHubIssue | null>(null)
-const editForm = reactive({ title: '', body: '', labels: '' })
+const editForm = reactive({ title: '', body: '', labels: [] as string[] })
+
+/** 当前仓库已用标签名（新建/编辑标签多选用） */
+const labels = ref<string[]>([])
+
+/** 移动端标签用逗号文本绑定（数组 ↔ 文本互转） */
+const createLabelsText = computed({
+  get: () => createForm.labels.join(','),
+  set: (v: string) => (createForm.labels = v.split(/[,，]/).map(s => s.trim()).filter(Boolean))
+})
+const editLabelsText = computed({
+  get: () => editForm.labels.join(','),
+  set: (v: string) => (editForm.labels = v.split(/[,，]/).map(s => s.trim()).filter(Boolean))
+})
 
 /** 判断 issue 是否符合当前列表筛选（open/closed/all） */
 function matchesFilter(i: GitHubIssue): boolean {
@@ -329,6 +373,8 @@ async function loadIssues() {
   loading.value = false
   if (res.code === 200) issues.value = res.data || []
   else ElMessage.error(`Issue加载失败：${res.msg}`)
+  const lRes = await listLabels(pat, ctx.value.owner, ctx.value.repo)
+  if (lRes.code === 200) labels.value = (lRes.data || []).map(l => l.name)
 }
 
 async function openDetail(row: GitHubIssue) {
@@ -406,6 +452,23 @@ function fileClickable(f: DiffFile): boolean {
   return f.status === 'added' || f.status === 'modified'
 }
 
+/** 在下拉选项里删除仓库标签（删除后同步从已选项中移除） */
+async function removeLabel(name: string) {
+  const c = ctx.value
+  if (!c) return
+  const pat = await withPat()
+  const res = await deleteLabel(pat, c.owner, c.repo, name)
+  if (res.code === 200 || res.code === 204) {
+    ElMessage.success(`标签 ${name} 已删除`)
+    labels.value = labels.value.filter(l => l !== name)
+    createForm.labels = createForm.labels.filter(l => l !== name)
+    editForm.labels = editForm.labels.filter(l => l !== name)
+    await logStore.write({ module: 'issue', action: '删除标签', detail: `${c.owner}/${c.repo} ${name}`, level: 'warning' })
+  } else {
+    ElMessage.error(`删除失败：${res.msg}`)
+  }
+}
+
 const filePreviewVisible = ref(false)
 const previewFilename = ref('')
 
@@ -472,7 +535,7 @@ async function submitComment() {
 function openCreate() {
   createForm.title = ''
   createForm.body = ''
-  createForm.labels = ''
+  createForm.labels = []
   createVisible.value = true
 }
 
@@ -484,11 +547,10 @@ async function submitCreate() {
   }
   saving.value = true
   const pat = await withPat()
-  const labels = createForm.labels.split(/[,，]/).map(s => s.trim()).filter(Boolean)
   const res = await createIssue(pat, ctx.value.owner, ctx.value.repo, {
     title: createForm.title.trim(),
     body: createForm.body || undefined,
-    labels: labels.length ? labels : undefined
+    labels: createForm.labels.length ? createForm.labels : undefined
   })
   saving.value = false
   if (res.code === 200 || res.code === 201) {
@@ -507,7 +569,7 @@ function openEdit(row: GitHubIssue) {
   editTarget.value = row
   editForm.title = row.title
   editForm.body = row.body || ''
-  editForm.labels = row.labels.map(l => l.name).join(',')
+  editForm.labels = row.labels.map(l => l.name)
   editVisible.value = true
 }
 
@@ -519,11 +581,10 @@ async function submitEdit() {
   }
   saving.value = true
   const pat = await withPat()
-  const labels = editForm.labels.split(/[,，]/).map(s => s.trim()).filter(Boolean)
   const res = await updateIssue(pat, ctx.value.owner, ctx.value.repo, editTarget.value.number, {
     title: editForm.title.trim(),
     body: editForm.body,
-    labels
+    labels: editForm.labels
   })
   saving.value = false
   if (res.code === 200 && res.data) {
@@ -568,6 +629,45 @@ onMounted(loadIssues)
   overflow: auto;
   white-space: pre-wrap;
   font-size: 13px;
+}
+.body-render {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 13px;
+}
+.comment-render {
+  margin-top: 6px;
+}
+.m-md-body {
+  margin: 8px 12px;
+}
+.m-md-cell {
+  margin: 8px 12px;
+}
+.m-popup.m-popup-fill {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+.m-popup.m-popup-fill .van-cell-group {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.m-popup.m-popup-fill .m-md-cell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
 }
 .sub-title {
   font-weight: 600;
@@ -617,6 +717,22 @@ onMounted(loadIssues)
   display: flex;
   flex: none;
 }
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.dialog-header-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dialog-header-ops {
+  display: flex;
+  flex: none;
+}
 .m-popup-title-row {
   display: flex;
   align-items: center;
@@ -651,5 +767,41 @@ onMounted(loadIssues)
 .commit-dialog.is-fullscreen .el-dialog__body {
   max-height: none;
   height: calc(100vh - 110px);
+}
+.form-dialog .el-dialog__body {
+  max-height: calc(100vh - 150px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.form-dialog.is-fullscreen .el-dialog__body {
+  max-height: none;
+  height: calc(100vh - 110px);
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.form-dialog.is-fullscreen .el-form {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.form-dialog.is-fullscreen .el-form-item.md-fill-item {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+.form-dialog.is-fullscreen .el-form-item.md-fill-item .el-form-item__content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 </style>
