@@ -21,6 +21,7 @@ export interface PRFile {
   additions: number
   deletions: number
   changes: number
+  patch?: string
 }
 
 export interface CreatePRPayload {

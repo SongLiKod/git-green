@@ -64,44 +64,13 @@
             <div class="m-sub" style="margin: 10px 6px">{{ commitDetail?.commit?.author?.name || '' }} · {{ commitDetail?.author?.login || '未知' }} · {{ commitDetail ? new Date(commitDetail.commit.author.date).toLocaleString() : '' }}</div>
             <template v-if="commitDetail?.files && commitDetail.files.length">
               <div class="m-section-title" style="margin: 12px 6px">变更文件（{{ commitDetail.files.length }}）</div>
-              <div v-for="(f, idx) in commitDetail.files" :key="f.filename" class="m-card" style="margin: 6px 6px">
-                <div class="diff-file-head">
-                  <span class="diff-index mono">{{ idx + 1 }}</span>
-                  <van-tag :type="statusTagType(f.status) === 'success' ? 'success' : statusTagType(f.status) === 'danger' ? 'danger' : statusTagType(f.status) === 'warning' ? 'warning' : 'default'">{{ statusText(f.status) }}</van-tag>
-                  <span class="diff-name-wrap">
-                  <span
-                    class="diff-filename mono"
-                    :class="{ 'diff-filename--link': fileClickable(f) }"
-                    @click="openFilePreview(f)"
-                    style="font-size: 12px"
-                  >{{ f.filename }}</span>
-                </span>
-                <span class="diff-counts"><b class="add">+{{ f.additions }}</b> <b class="del">-{{ f.deletions }}</b></span>
-                </div>
-                <div v-if="f.patch" class="diff-view">
-                  <div v-for="l in parsePatch(f.patch)" :key="l.i" :class="['diff-line', `diff-line--${l.cls}`]">{{ l.text }}</div>
-                </div>
-                <div v-else class="m-sub" style="margin: 4px 0">（二进制 / 大文件，无内联 diff）</div>
-              </div>
+<FileDiffList :files="commitDetail.files" @preview="openFilePreview" />
             </template>
             <div class="m-actions">
               <van-button block plain @click="commitDetail && copyText(commitDetail.sha)">复制SHA</van-button>
               <van-button block plain @click="commitDetail && copyText(commitDetail.html_url)">复制链接</van-button>
             </div>
             <van-button block style="margin-top: 10px" @click="commitVisible = false">关闭</van-button>
-          </div>
-        </van-popup>
-
-        <van-popup v-model:show="filePreviewVisible" position="bottom" round :style="{ height: filePreviewFs ? '100%' : '86%' }">
-          <div class="m-popup">
-            <div class="m-popup-title-row">
-              <span class="m-popup-title">源文件预览 {{ filePreviewPath }}</span>
-              <van-button size="mini" plain @click="filePreviewFs = !filePreviewFs">{{ filePreviewFs ? '退出全屏' : '全屏' }}</van-button>
-            </div>
-            <div v-if="filePreviewLoading" style="text-align: center; padding: 30px"><van-loading /></div>
-            <div v-else-if="filePreviewKind === 'image' && filePreviewImage" class="img-view-m"><img :src="filePreviewImage" alt="preview" /></div>
-            <pre v-else class="m-code">{{ filePreviewContent || '（无法预览或文件为空）' }}</pre>
-            <van-button block style="margin-top: 10px" @click="filePreviewVisible = false">关闭</van-button>
           </div>
         </van-popup>
 
@@ -247,69 +216,36 @@
           <div class="comment-meta">{{ commitDetail.commit.author.name }} · {{ commitDetail.author?.login || '未知' }} · {{ new Date(commitDetail.commit.author.date).toLocaleString() }}</div>
           <template v-if="commitDetail.files && commitDetail.files.length">
             <div class="sub-title">变更文件（{{ commitDetail.files.length }}）</div>
-            <div v-for="(f, idx) in commitDetail.files" :key="f.filename" class="diff-file">
-              <div class="diff-file-head">
-                <span class="diff-index mono">{{ idx + 1 }}</span>
-                <el-tag size="small" :type="statusTagType(f.status)">{{ statusText(f.status) }}</el-tag>
-                <span class="diff-name-wrap">
-                <span
-                  class="diff-filename mono"
-                  :class="{ 'diff-filename--link': fileClickable(f) }"
-                  :title="fileClickable(f) ? '点击预览源文件' : ''"
-                  @click="openFilePreview(f)"
-                >{{ f.filename }}</span>
-              </span>
-                <span class="diff-counts"><b class="add">+{{ f.additions }}</b> <b class="del">-{{ f.deletions }}</b></span>
-              </div>
-              <div v-if="f.patch" class="diff-view">
-                <div v-for="l in parsePatch(f.patch)" :key="l.i" :class="['diff-line', `diff-line--${l.cls}`]">{{ l.text }}</div>
-              </div>
-              <div v-else class="comment-meta">（二进制 / 大文件，无内联 diff）</div>
-            </div>
+            <FileDiffList :files="commitDetail.files" @preview="openFilePreview" />
           </template>
         </template>
         <template #footer>
           <el-button @click="commitVisible = false">关闭</el-button>
         </template>
       </el-dialog>
-
-      <el-dialog v-model="filePreviewVisible" width="760px" top="4vh" class="file-preview-dialog" :fullscreen="filePreviewFs" :show-close="false">
-        <template #header>
-          <div class="commit-header">
-            <span class="commit-header-title">源文件预览 {{ filePreviewPath }}</span>
-            <span class="commit-header-ops">
-              <el-button link type="primary" @click="filePreviewFs = !filePreviewFs">{{ filePreviewFs ? '退出全屏' : '全屏' }}</el-button>
-              <el-button link @click="filePreviewVisible = false">关闭</el-button>
-            </span>
-          </div>
-        </template>
-        <div v-if="filePreviewLoading" style="text-align: center; padding: 30px"><el-icon class="is-loading"><Loading /></el-icon> 正在加载源文件...</div>
-        <div v-else-if="filePreviewKind === 'image' && filePreviewImage" class="fp-img"><img :src="filePreviewImage" alt="preview" /></div>
-        <pre v-else class="fp-code">{{ filePreviewContent || '（无法预览或文件为空）' }}</pre>
-        <template #footer>
-          <el-button @click="filePreviewVisible = false">关闭</el-button>
-        </template>
-      </el-dialog>
     </template>
     <el-empty v-else description="请先选择仓库" />
     </template>
+
+    <SourceFilePreview v-model="filePreviewVisible" :filename="previewFilename" :load="previewLoader" />
   </div>
 </template>
 
 <script setup lang="ts">
 defineOptions({ name: 'IssueManage' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { listIssues, getIssue, createIssue, setIssueState, updateIssue, listComments, commentIssue, listIssueTimeline, getCommit } from '@/api/githubIssue'
-import type { GitHubIssue, IssueComment, GithubCommitInfo, CommitFile } from '@/api/githubIssue'
+import type { GitHubIssue, IssueComment, GithubCommitInfo } from '@/api/githubIssue'
 import type { ApiResult } from '@/api/request'
-import { getFileContent, getFileRaw, getFileBlob } from '@/api/githubFile'
 import { useIsMobile } from '@/utils/platform'
+import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
+import SourceFilePreview, { loadSourcePreview } from '@/components/SourceFilePreview.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -465,105 +401,27 @@ function copyText(text: string) {
   }
 }
 
-function parsePatch(patch: string): { text: string; cls: string; i: number }[] {
-  const lines: { text: string; cls: string; i: number }[] = []
-  let i = 0
-  for (const raw of patch.split('\n')) {
-    let cls = 'meta'
-    const t = raw
-    if (raw.startsWith('+') && !raw.startsWith('+++')) cls = 'add'
-    else if (raw.startsWith('-') && !raw.startsWith('---')) cls = 'del'
-    else if (raw.startsWith('@@')) cls = 'hunk'
-    else if (raw.startsWith(' ') || raw === '') cls = 'ctx'
-    lines.push({ text: t, cls, i: i++ })
-  }
-  return lines
-}
-
-function statusText(s: string) {
-  return ({ added: '新增', modified: '修改', removed: '删除', renamed: '重命名', copied: '复制' } as Record<string, string>)[s] || s
-}
-
-function statusTagType(s: string) {
-  return s === 'added' ? 'success' : s === 'removed' ? 'danger' : s === 'modified' ? 'warning' : 'info'
-}
-
 /** 仅新增/修改的文件可点击预览源文件 */
-function fileClickable(f: CommitFile): boolean {
+function fileClickable(f: DiffFile): boolean {
   return f.status === 'added' || f.status === 'modified'
 }
 
-const IMAGE_MIMES: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  svg: 'image/svg+xml',
-  bmp: 'image/bmp',
-  ico: 'image/x-icon',
-  avif: 'image/avif'
-}
-
-function imageMime(name: string): string | null {
-  const ext = name.split('.').pop()?.toLowerCase() || ''
-  return IMAGE_MIMES[ext] || null
-}
-
 const filePreviewVisible = ref(false)
-const filePreviewLoading = ref(false)
-const filePreviewPath = ref('')
-const filePreviewKind = ref<'text' | 'image'>('text')
-const filePreviewContent = ref('')
-const filePreviewImage = ref('')
-const filePreviewFs = ref(false)
+const previewFilename = ref('')
 
-async function openFilePreview(f: CommitFile) {
+async function openFilePreview(f: DiffFile) {
   if (!fileClickable(f) || !commitDetail.value) return
   const c = ctx.value
   if (!c) return
-  try {
-    await ElMessageBox.confirm(`确定预览文件「${f.filename}」的源文件？`, '预览确认', {
-      type: 'info',
-      confirmButtonText: '预览',
-      cancelButtonText: '取消'
-    })
-  } catch {
-    return
-  }
-  const pat = await withPat()
-  const sha = commitDetail.value.sha
-  const mime = imageMime(f.filename)
-  filePreviewPath.value = f.filename
-  filePreviewKind.value = mime ? 'image' : 'text'
-  filePreviewContent.value = ''
-  filePreviewImage.value = ''
-  filePreviewLoading.value = true
+  previewFilename.value = f.filename
   filePreviewVisible.value = true
-  try {
-    if (mime) {
-      const raw = await getFileRaw(pat, c.owner, c.repo, f.filename, sha)
-      if (raw.code !== 200 || !raw.data) {
-        ElMessage.error(`图片读取失败：${raw.msg}`)
-        return
-      }
-      if (raw.data.base64) {
-        filePreviewImage.value = `data:${mime};base64,${raw.data.base64}`
-      } else {
-        const blobRes = await getFileBlob(pat, raw.data.downloadUrl)
-        if (blobRes.code === 200 && blobRes.data) filePreviewImage.value = URL.createObjectURL(blobRes.data)
-      }
-    } else {
-      const res = await getFileContent(pat, c.owner, c.repo, f.filename, sha)
-      if (res.code !== 200 || !res.data) {
-        ElMessage.error(`读取失败：${res.msg}`)
-        return
-      }
-      filePreviewContent.value = res.data.content
-    }
-  } finally {
-    filePreviewLoading.value = false
-  }
+}
+
+async function previewLoader(name: string) {
+  const c = ctx.value
+  if (!c || !commitDetail.value) throw new Error('上下文丢失')
+  const pat = await withPat()
+  return loadSourcePreview(pat, c.owner, c.repo, name, commitDetail.value.sha)
 }
 
 async function toggleState(row: GitHubIssue) {
@@ -775,96 +633,6 @@ onMounted(loadIssues)
   font-size: 13px;
   word-break: break-all;
 }
-.diff-file {
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  margin-bottom: 12px;
-  overflow: hidden;
-}
-.diff-file-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: var(--bg-page);
-  border-bottom: 1px solid var(--border-color);
-}
-.diff-name-wrap {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-.diff-filename {
-  display: inline-block;
-  max-width: 100%;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: middle;
-}
-.diff-index {
-  flex: none;
-  min-width: 22px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-primary);
-  background: rgba(0, 148, 88, 0.08);
-  border-radius: 4px;
-  text-align: center;
-  padding: 2px 5px;
-}
-.diff-filename--link {
-  cursor: pointer;
-  color: var(--color-primary);
-}
-.diff-filename--link:hover {
-  text-decoration: underline;
-}
-.diff-counts {
-  flex: none;
-  font-family: Consolas, monospace;
-  font-size: 12px;
-}
-.diff-counts b.add {
-  color: var(--success, #2e7d32);
-}
-.diff-counts b.del {
-  color: var(--danger, #c62828);
-  margin-left: 6px;
-}
-.diff-view {
-  background: var(--bg-card);
-  max-height: 240px;
-  overflow: auto;
-  font-family: Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre;
-  padding: 6px 0;
-}
-.diff-view .diff-line {
-  padding: 0 10px;
-  min-height: 18px;
-}
-.diff-line--add {
-  background: rgba(46, 125, 50, 0.15);
-  color: #2e7d32;
-}
-.diff-line--del {
-  background: rgba(198, 40, 40, 0.12);
-  color: #c62828;
-}
-.diff-line--hunk {
-  background: rgba(2, 136, 209, 0.12);
-  color: #0277bd;
-}
-.diff-line--meta {
-  color: var(--text-secondary);
-}
-.diff-line--ctx {
-  color: var(--text-main);
-}
 .mono {
   font-family: Consolas, monospace;
 }
@@ -872,33 +640,6 @@ onMounted(loadIssues)
   white-space: pre-wrap;
   font-size: 13px;
   margin: 6px 0 0;
-}
-.fp-code {
-  background: var(--bg-page);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 12px;
-  height: 60vh;
-  overflow: auto;
-  font-family: Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.fp-img {
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  height: 60vh;
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-page);
-}
-.fp-img img {
-  max-width: 100%;
-  max-height: 100%;
 }
 </style>
 
@@ -910,17 +651,5 @@ onMounted(loadIssues)
 .commit-dialog.is-fullscreen .el-dialog__body {
   max-height: none;
   height: calc(100vh - 110px);
-}
-.file-preview-dialog .el-dialog__body {
-  max-height: calc(100vh - 150px);
-  overflow: auto;
-}
-.file-preview-dialog.is-fullscreen .el-dialog__body {
-  height: calc(100vh - 110px);
-  max-height: none;
-}
-.file-preview-dialog.is-fullscreen .fp-code,
-.file-preview-dialog.is-fullscreen .fp-img {
-  height: calc(100vh - 130px);
 }
 </style>

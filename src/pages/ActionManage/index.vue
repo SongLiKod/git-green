@@ -37,7 +37,7 @@
             <div class="m-card-head">
               <div class="m-card-title">
                 <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
-                <div class="m-sub">{{ r.branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
+                <div class="m-sub">{{ r.head_branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
               </div>
               <van-tag :type="r.status !== 'completed' ? 'warning' : r.conclusion === 'success' ? 'success' : r.conclusion === 'cancelled' ? 'default' : 'danger'">
                 {{ runText(r) }}
@@ -237,7 +237,7 @@
                 <span class="mono">#{{ row.run_number }}</span> {{ row.display_title || row.name }}
               </template>
             </el-table-column>
-            <el-table-column prop="branch" label="分支" width="140" />
+            <el-table-column prop="head_branch" label="分支" width="140" />
             <el-table-column prop="event" label="触发方式" width="130" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
