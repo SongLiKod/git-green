@@ -22,7 +22,7 @@
 
         <van-action-sheet
           v-model:show="fileSheetVisible"
-          :actions="[{ name: '预览' }, { name: '编辑' }, { name: '删除', color: '#ee0a24' }]"
+          :actions="[{ name: '预览' }, { name: '编辑' }, { name: '复制路径' }, { name: '删除', color: '#ee0a24' }]"
           cancel-text="取消"
           close-on-click-action
           @select="onFileSheetSelect"
@@ -97,11 +97,12 @@
           <el-table-column label="大小" width="110">
             <template #default="{ row }">{{ row.type === 'dir' ? '-' : formatSize(row.size) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="220">
+          <el-table-column label="操作" width="300">
             <template #default="{ row }">
               <template v-if="row.type === 'file'">
                 <el-button link type="primary" @click="preview(row)">预览</el-button>
                 <el-button link type="primary" @click="editFile(row)">编辑</el-button>
+                <el-button link type="primary" @click="copyGithubPath(row)">复制路径</el-button>
                 <el-button link type="danger" @click="removeFile(row)">删除</el-button>
               </template>
               <el-button v-else link type="primary" @click="loadDir(row.path)">进入</el-button>
@@ -191,6 +192,7 @@ async function onFileSheetSelect(action: { name: string }) {
   if (!e) return
   if (action.name === '预览') await preview(e)
   else if (action.name === '编辑') await editFile(e)
+  else if (action.name === '复制路径') copyGithubPath(e)
   else await removeFile(e)
 }
 
@@ -252,6 +254,26 @@ function formatSize(size: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(2)} MB`
+}
+
+function githubFileUrl(path: string): string {
+  const c = ctx.value
+  if (!c) return ''
+  const encoded = path.split('/').map(encodeURIComponent).join('/')
+  return `https://github.com/${c.owner}/${c.repo}/blob/${encodeURIComponent(branch.value)}/${encoded}`
+}
+
+function copyGithubPath(row: FileEntry) {
+  const url = githubFileUrl(row.path)
+  if (!url) return
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(url).then(
+      () => ElMessage.success('已复制GitHub路径'),
+      () => ElMessage.warning('复制失败，请手动复制')
+    )
+  } else {
+    ElMessage.warning('复制失败，请手动复制')
+  }
 }
 
 async function initRepo() {
