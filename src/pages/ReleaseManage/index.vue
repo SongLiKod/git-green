@@ -27,7 +27,7 @@
         </div>
 
         <template v-if="tasks.length">
-          <div class="m-section-title">下载任务</div>
+          <div class="m-section-title">下载任务(下载完成后请到下载目录查看)</div>
           <div v-for="t in tasks" :key="t.id" class="m-card">
             <div class="m-card-head">
               <div class="m-card-title">
