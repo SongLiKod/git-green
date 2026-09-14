@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | Web 网页端 | 浏览器（hash 路由） | 全部远程 GitHub 管理能力，窄屏（≤768px）自动切换移动形态 UI |
 | Windows 客户端 | Electron | 在 Web 能力之上，通过 NodeJS 子进程额外提供**本地 Git 能力**（`git:exec`）与系统文件对话框（保存/打开/目录选择） |
-| Android 客户端 | WebView（原生壳） | 复用同一套前端代码；下载由系统 `DownloadManager` 接管（后台断点续传），支持系统分享键 |
+| Android 客户端 | WebView（原生壳） | 复用同一套前端代码；下载由原生流式下载接管（App 内实时进度、完成后保存到系统下载目录），支持系统分享键 |
 
 平台识别逻辑见 `src/utils/platform.ts`：
 - `window.electronAPI` 存在 → Windows 客户端

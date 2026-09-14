@@ -286,7 +286,7 @@
 <script setup lang="ts">
 defineOptions({ name: 'RepoList' })
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -302,6 +302,7 @@ const settings = useSettingsStore()
 const isWindows = isWindowsClient()
 const isMobile = useIsMobile()
 const router = useRouter()
+const route = useRoute()
 
 const searchKw = ref('')
 const onlyFavorite = ref(false)
@@ -437,13 +438,17 @@ const accountTabIndex = computed({
 
 const sheetVisible = ref(false)
 const sheetRepo = ref<GitHubRepo | null>(null)
-const sheetActions = [
+const sheetBase = [
   { name: '仓库设置', path: '/repo-setting' },
   { name: '分支管理', path: '/branch' },
   { name: 'Action流水线', path: '/action' },
   { name: 'Release管理', path: '/release' },
   { name: '文件管理', path: '/file' }
 ]
+/** 当前所在功能项高亮标注「当前」 */
+const sheetActions = computed(() =>
+  sheetBase.map(a => (route.path === a.path ? { ...a, subname: '当前使用中', color: 'var(--color-primary)' } : { ...a }))
+)
 
 function openSheet(r: GitHubRepo) {
   sheetRepo.value = r

@@ -444,10 +444,10 @@ import {
   listCheckRunAnnotations
 } from '@/api/githubAction'
 import type { Workflow, WorkflowRun, RepoVariable, RepoSecret, RunArtifact, CheckRunAnnotation } from '@/api/githubAction'
-import type { ApiResult } from '@/api/request'
+import { auth, type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
-import { blobDownload } from '@/utils/platform'
+import { blobDownload, startNativeDownload, saveNativeBlob } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
 import { useIsMobile } from '@/utils/platform'
 
@@ -956,7 +956,17 @@ function downloadErrorLog() {
   if (!ctx.value || !runErrorRaw.value) return
   const num = resultRun.value?.run_number || ''
   const name = `action-errors-${ctx.value.owner}-${ctx.value.repo}-#${num}.log`
-  blobDownload(new Blob([runErrorRaw.value], { type: 'text/plain' }), name)
+  const blob = new Blob([runErrorRaw.value], { type: 'text/plain' })
+  if (
+    saveNativeBlob(`log-${Date.now()}`, name, blob, {
+      onDone: path => ElMessage.success(`错误日志已保存到 ${path}`),
+      onError: msg => ElMessage.error(`保存失败：${msg}`)
+    })
+  ) {
+    logStore.write({ module: 'action', action: '下载错误日志', detail: `${ctx.value.owner}/${ctx.value.repo} #${num}`, level: 'warning' })
+    return
+  }
+  blobDownload(blob, name)
   logStore.write({ module: 'action', action: '下载错误日志', detail: `${ctx.value.owner}/${ctx.value.repo} #${num}`, level: 'warning' })
   ElMessage.success('错误日志已下载')
 }
@@ -966,6 +976,25 @@ async function downloadArtifact(art: RunArtifact) {
   downloading.value = art.name
   try {
     const pat = await withPat()
+    // Android：软件内原生流式下载，进度由原生回传
+    if (
+      startNativeDownload(
+        `artifact-${art.id}-${Date.now()}`,
+        art.archive_download_url,
+        { ...auth(pat), Accept: 'application/vnd.github+json' },
+        `${art.name}.zip`,
+        {
+          onDone: path => {
+            ElMessage.success(`已保存到 ${path}`)
+            logStore.write({ module: 'action', action: '下载Artifact', detail: `${art.name} @ #${resultRun.value?.run_number || ''}` })
+          },
+          onError: msg => ElMessage.error(`下载失败：${msg}`)
+        }
+      )
+    ) {
+      ElMessage.success('已开始软件内下载')
+      return
+    }
     const res = await downloadArtifactBlob(pat, art.archive_download_url)
     if (res.code === 200 && res.data) {
       blobDownload(res.data, `${art.name}.zip`)
