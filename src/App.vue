@@ -139,7 +139,7 @@
               @click="repoMenuVisible = true"
             >
               <el-icon :size="20"><Folder /></el-icon>
-              <span class="mobile-tabbar__label">{{ t.title }}</span>
+              <span class="mobile-tabbar__label">{{ repoTabLabel }}</span>
             </div>
             <router-link
               v-else
@@ -209,7 +209,8 @@ const mobileTabs: { path: string; title: string; icon?: unknown; menu?: boolean 
 const repoPages = ['/repo', '/repo-setting', '/branch', '/commits', '/action', '/release', '/file', '/issue', '/pull']
 const repoMenuVisible = ref(false)
 const repoTabActive = computed(() => repoPages.includes(route.path))
-const repoMenuActions = [
+const repoTabLabel = computed(() => (repoTabActive.value ? currentTitle.value : '仓库'))
+const repoMenuBase = [
   { name: '仓库列表', path: '/repo' },
   { name: '仓库设置', path: '/repo-setting' },
   { name: '分支管理', path: '/branch' },
@@ -220,6 +221,12 @@ const repoMenuActions = [
   { name: 'Issue管理', path: '/issue' },
   { name: 'PullRequest', path: '/pull' }
 ]
+/** 当前所在仓库功能项在菜单中高亮标注「当前」 */
+const repoMenuActions = computed(() =>
+  repoMenuBase.map(a =>
+    route.path === a.path ? { ...a, subname: '当前使用中', color: 'var(--color-primary)' } : { ...a }
+  )
+)
 
 function onRepoMenuSelect(action: { path: string }) {
   router.push(action.path)

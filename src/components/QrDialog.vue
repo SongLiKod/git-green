@@ -22,7 +22,8 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import QRCode from 'qrcode'
-import { blobDownload } from '@/utils/platform'
+import { ElMessage } from 'element-plus'
+import { blobDownload, saveNativeBlob } from '@/utils/platform'
 
 const props = withDefaults(defineProps<{ modelValue: boolean; text: string; title?: string }>(), { title: '' })
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
@@ -59,7 +60,16 @@ function savePng() {
   const arr = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
   const name = props.title ? `${props.title.replace(/[\\/:*?"<>|]/g, '-')}.png` : 'gitgreen-qr.png'
-  blobDownload(new Blob([arr], { type: 'image/png' }), name)
+  const blob = new Blob([arr], { type: 'image/png' })
+  if (
+    saveNativeBlob(`qr-${Date.now()}`, name, blob, {
+      onDone: path => ElMessage.success(`二维码已保存到 ${path}`),
+      onError: msg => ElMessage.error(`保存失败：${msg}`)
+    })
+  ) {
+    return
+  }
+  blobDownload(blob, name)
 }
 </script>
 

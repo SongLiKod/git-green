@@ -26,14 +26,28 @@ export interface ElectronAPI {
 }
 
 export interface AndroidBridge {
-  /** Android 原生下载管理器（系统 DownloadManager，支持后台断点续传） */
+  /** 原生软件内流式下载：App 内下载并回传进度，完成后保存到系统下载目录 */
   download: (taskJson: string) => void
+  /** 取消指定下载任务（可选，旧版本壳可能未实现） */
+  cancel?: (id: string) => void
+  /** 保存前端已生成的字节（二维码/文本等）到系统下载目录（可选，旧版本壳可能未实现） */
+  saveBase64?: (taskJson: string) => void
+}
+
+export interface NativeDownloadHandlers {
+  onProgress?: (loaded: number, total: number) => void
+  onDone?: (path: string) => void
+  onError?: (message: string) => void
 }
 
 declare global {
   interface Window {
     electronAPI?: ElectronAPI
     AndroidBridge?: AndroidBridge
+    /** 原生下载进度/完成/失败回调（由 installNativeCallbacks 注入） */
+    __gitgreenDownloadProgress?: (id: string, loaded: number, total: number) => void
+    __gitgreenDownloadDone?: (id: string, path: string) => void
+    __gitgreenDownloadError?: (id: string, message: string) => void
   }
 }
 
@@ -63,16 +77,85 @@ export function useIsMobile() {
   return computed(() => getPlatform() === 'android' || narrowScreen.value)
 }
 
+/* ---------------- 软件内下载（Android 原生流式，App 内显示真实进度） ---------------- */
+
+const nativeHandlers = new Map<string, NativeDownloadHandlers>()
+
+/** 注入一次性全局回调，把原生进度事件分发到对应任务 */
+function installNativeCallbacks() {
+  if (window.__gitgreenDownloadProgress) return
+  window.__gitgreenDownloadProgress = (id, loaded, total) => {
+    nativeHandlers.get(id)?.onProgress?.(Number(loaded), Number(total))
+  }
+  window.__gitgreenDownloadDone = (id, path) => {
+    const handlers = nativeHandlers.get(id)
+    nativeHandlers.delete(id)
+    handlers?.onDone?.(String(path))
+  }
+  window.__gitgreenDownloadError = (id, message) => {
+    const handlers = nativeHandlers.get(id)
+    nativeHandlers.delete(id)
+    handlers?.onError?.(String(message))
+  }
+}
+
 /**
- * 尝试交给 Android 原生下载管理器（后台断点续传）。
+ * 软件内下载（Android）：交给原生在 App 内流式下载并回传进度，完成后保存到系统下载目录。
  * 返回 true 表示已由原生下载接管；Web/Windows 端返回 false，由前端 blob 下载闭环。
  */
-export function tryNativeDownload(url: string, headers: Record<string, string>, filename: string): boolean {
-  if (window.AndroidBridge) {
-    window.AndroidBridge.download(JSON.stringify({ url, headers, filename }))
-    return true
-  }
-  return false
+export function startNativeDownload(
+  id: string,
+  url: string,
+  headers: Record<string, string>,
+  filename: string,
+  handlers: NativeDownloadHandlers = {}
+): boolean {
+  if (!window.AndroidBridge) return false
+  installNativeCallbacks()
+  nativeHandlers.set(id, handlers)
+  window.AndroidBridge.download(JSON.stringify({ id, url, headers, filename }))
+  return true
+}
+
+/** 取消软件内下载任务（仅 Android 原生下载生效） */
+export function cancelNativeDownload(id: string) {
+  nativeHandlers.delete(id)
+  window.AndroidBridge?.cancel?.(id)
+}
+
+/** Blob 转 Base64（不含 data URL 前缀） */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.slice(result.indexOf(',') + 1))
+    }
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/**
+ * 软件内保存前端已生成的字节（二维码/文本日志等）到系统下载目录。
+ * 返回 true 表示已由原生接管；Web/Windows 端返回 false，由前端 blob 下载闭环。
+ */
+export function saveNativeBlob(
+  id: string,
+  filename: string,
+  blob: Blob,
+  handlers: NativeDownloadHandlers = {}
+): boolean {
+  if (!window.AndroidBridge?.saveBase64) return false
+  installNativeCallbacks()
+  nativeHandlers.set(id, handlers)
+  blobToBase64(blob)
+    .then(base64 => window.AndroidBridge?.saveBase64?.(JSON.stringify({ id, filename, base64 })))
+    .catch(err => {
+      nativeHandlers.delete(id)
+      handlers.onError?.(String(err?.message || err))
+    })
+  return true
 }
 
 /** 浏览器内 blob 落盘下载（不跳转任何浏览器外链页面） */

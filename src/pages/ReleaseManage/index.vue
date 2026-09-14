@@ -228,7 +228,7 @@ import * as releaseApi from '@/api/githubRelease'
 import type { Release, ReleaseAsset } from '@/api/githubRelease'
 import { auth } from '@/api/request'
 import QrDialog from '@/components/QrDialog.vue'
-import { blobDownload, tryNativeDownload, useIsMobile } from '@/utils/platform'
+import { blobDownload, startNativeDownload, cancelNativeDownload, useIsMobile } from '@/utils/platform'
 import { saveDownload, listDownloads, removeDownload } from '@/utils/db'
 
 interface DownloadTask {
@@ -400,21 +400,39 @@ async function startDownload(url: string, filename: string, totalHint: number) {
   const pat = await withPat()
   if (!pat) return
   const headers: Record<string, string> = { ...auth(pat), Accept: 'application/octet-stream' }
-  // Android：交给原生下载管理器，支持后台断点续传
-  if (tryNativeDownload(url, headers, filename)) {
-    const task = reactive<DownloadTask>({ id: `${Date.now()}`, filename, percent: 0, status: 'downloading' })
-    tasks.value.unshift(task)
-    task.percent = 100
-    task.status = 'done'
-    ElMessage.success('已加入原生下载队列（支持后台断点续传）')
-    saveTask(task)
-    logStore.write({ module: 'release', action: '下载资源', detail: `${filename}（原生断点续传）`, level: 'success' })
+  const task = reactive<DownloadTask>({
+    id: `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    filename,
+    percent: 0,
+    status: 'downloading'
+  })
+  tasks.value.unshift(task)
+  saveTask(task)
+  // Android：软件内原生流式下载，App 内显示真实进度，完成后保存到系统下载目录
+  if (
+    startNativeDownload(task.id, url, headers, filename, {
+      onProgress: (loaded, total) => {
+        task.percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : Math.min(99, Math.round((loaded / (totalHint || 1)) * 100))
+      },
+      onDone: path => {
+        task.percent = 100
+        task.status = 'done'
+        saveTask(task)
+        ElMessage.success(`${filename} 下载完成，已保存到 ${path}`)
+        logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成（软件内）`, level: 'success' })
+      },
+      onError: msg => {
+        task.status = 'error'
+        saveTask(task)
+        ElMessage.error(`下载失败：${msg}`)
+        logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载失败：${msg}`, level: 'error' })
+      }
+    })
+  ) {
+    ElMessage.success('已开始软件内下载，进度可在下载任务中查看')
     return
   }
   // Web/Windows：blob 流式下载，进度可视化
-  const task = reactive<DownloadTask>({ id: `${Date.now()}`, filename, percent: 0, status: 'downloading' })
-  tasks.value.unshift(task)
-  saveTask(task)
   const res = await releaseApi.downloadWithProgress(pat, url, (loaded, total) => {
     task.percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : Math.min(99, Math.round((loaded / (totalHint || 1)) * 100))
   })
@@ -452,6 +470,7 @@ async function loadTasks() {
 }
 
 async function removeTask(t: DownloadTask) {
+  if (t.status === 'downloading') cancelNativeDownload(t.id)
   tasks.value = tasks.value.filter(x => x.id !== t.id)
   await removeDownload(t.id)
   ElMessage.success('下载任务已删除')
