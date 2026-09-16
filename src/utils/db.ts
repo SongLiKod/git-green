@@ -25,6 +25,14 @@ export interface DownloadRecord {
   percent: number
   status: 'downloading' | 'done' | 'error'
   time?: number
+  /** 面向用户的展示路径（Android 保存位置，Web/Windows 为浏览器下载目录） */
+  path?: string
+  /** 可打开/分享的文件 Uri（仅 Android 原生下载产生，前端仅透传） */
+  uri?: string
+  /** 文件大小（字节，未知时为 0） */
+  size?: number
+  /** 失败原因 */
+  error?: string
 }
 
 export interface BackupPayload {
