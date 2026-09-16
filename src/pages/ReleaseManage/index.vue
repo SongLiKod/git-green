@@ -27,14 +27,24 @@
         </div>
 
         <template v-if="tasks.length">
-          <div class="m-section-title">下载任务(下载完成后请到下载目录查看)</div>
+          <div class="m-section-title">下载任务（完成后可直接打开）</div>
           <div v-for="t in tasks" :key="t.id" class="m-card">
             <div class="m-card-head">
               <div class="m-card-title">
                 <div class="t">{{ t.filename }}</div>
                 <van-progress :percentage="t.percent" :status="t.status === 'error' ? 'exception' : t.percent >= 100 ? 'success' : ''" style="margin-top: 6px" />
+                <div v-if="t.status === 'done' && t.path" class="m-sub">已保存到 {{ t.path }}</div>
+                <div v-else-if="t.status === 'error' && t.error" class="m-sub">失败：{{ t.error }}</div>
               </div>
               <van-tag :type="t.status === 'done' ? 'success' : t.status === 'error' ? 'danger' : 'primary'">{{ taskStatusText(t) }}</van-tag>
+            </div>
+            <div class="m-actions">
+              <template v-if="t.status === 'done'">
+                <van-button v-if="t.uri" size="mini" type="primary" plain @click="openTask(t)">打开文件</van-button>
+                <van-button v-if="t.uri && isTaskApk(t)" size="mini" type="success" @click="installTask(t)">立即安装</van-button>
+                <van-button v-if="t.uri" size="mini" plain @click="shareTask(t)">分享</van-button>
+                <van-button v-if="isAndroid" size="mini" plain @click="openDir">下载目录</van-button>
+              </template>
               <van-button size="mini" type="danger" plain @click="removeTask(t)">删除</van-button>
             </div>
           </div>
@@ -60,6 +70,20 @@
               <van-progress :percentage="t.percent" />
             </div>
             <van-button block style="margin-top: 10px" @click="detailVisible = false">关闭</van-button>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="doneVisible" round :style="{ width: '84%', maxWidth: '420px' }">
+          <div class="m-popup">
+            <div class="m-popup-title">下载完成</div>
+            <div class="m-sub m-done-name">{{ doneFile.filename }}</div>
+            <div class="m-sub m-done-path">已保存到 {{ doneFile.path }}</div>
+            <div class="m-actions m-done-actions">
+              <van-button v-if="doneFile.uri" size="small" type="primary" @click="openDone">打开文件</van-button>
+              <van-button v-if="doneFile.uri && doneFile.isApk" size="small" type="success" @click="installDone">立即安装</van-button>
+              <van-button v-if="isAndroid" size="small" plain @click="openDir">下载目录</van-button>
+            </div>
+            <van-button block style="margin-top: 12px" @click="doneVisible = false">关闭</van-button>
           </div>
         </van-popup>
 
@@ -129,16 +153,28 @@
         <el-table :data="tasks" border size="small" max-height="240">
           <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column prop="filename" label="文件" min-width="200" />
-          <el-table-column label="进度" min-width="200">
+          <el-table-column label="进度" min-width="160">
             <template #default="{ row }">
               <el-progress :percentage="row.percent" :status="row.status === 'error' ? 'exception' : row.percent >= 100 ? 'success' : ''" />
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="110">
+          <el-table-column label="保存位置" min-width="200">
+            <template #default="{ row }">
+              <span v-if="row.status === 'done'">{{ row.path || '浏览器默认下载目录' }}</span>
+              <span v-else-if="row.status === 'error'">{{ row.error || '下载失败' }}</span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
             <template #default="{ row }">{{ taskStatusText(row) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="80">
+          <el-table-column label="操作" width="200">
             <template #default="{ row }">
+              <template v-if="row.status === 'done'">
+                <el-button v-if="row.uri" link type="primary" @click="openTask(row)">打开</el-button>
+                <el-button v-if="row.uri && isTaskApk(row)" link type="success" @click="installTask(row)">安装</el-button>
+                <el-button v-if="row.uri" link @click="shareTask(row)">分享</el-button>
+              </template>
               <el-button link type="danger" @click="removeTask(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -218,7 +254,7 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'ReleaseManage' })
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -228,7 +264,21 @@ import * as releaseApi from '@/api/githubRelease'
 import type { Release, ReleaseAsset } from '@/api/githubRelease'
 import { auth } from '@/api/request'
 import QrDialog from '@/components/QrDialog.vue'
-import { blobDownload, startNativeDownload, cancelNativeDownload, useIsMobile } from '@/utils/platform'
+import {
+  blobDownload,
+  startNativeDownload,
+  cancelNativeDownload,
+  useIsMobile,
+  isAndroidClient,
+  openNativeFile,
+  installNativeApk,
+  openNativeDownloadDir,
+  shareNativeFile,
+  requestAndroidNotificationPermission,
+  guessMimeByName,
+  isApkFile,
+  setNativeMessageHandler
+} from '@/utils/platform'
 import { saveDownload, listDownloads, removeDownload } from '@/utils/db'
 
 interface DownloadTask {
@@ -236,6 +286,14 @@ interface DownloadTask {
   filename: string
   percent: number
   status: 'downloading' | 'done' | 'error'
+  /** 展示路径（Android 为保存位置，Web/Windows 为浏览器下载目录） */
+  path?: string
+  /** 可打开/分享的文件 Uri（仅 Android 原生下载产生） */
+  uri?: string
+  /** 文件大小（字节） */
+  size?: number
+  /** 失败原因 */
+  error?: string
 }
 
 const accountStore = useAccountStore()
@@ -243,6 +301,7 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+const isAndroid = computed(() => isAndroidClient())
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
@@ -275,6 +334,17 @@ const detailVisible = ref(false)
 const detail = ref<Release | null>(null)
 
 const tasks = ref<DownloadTask[]>([])
+
+/* 下载完成弹窗（移动端：明确告知保存位置并提供打开/安装入口） */
+const doneVisible = ref(false)
+const doneFile = reactive({ filename: '', path: '', uri: '', isApk: false })
+function showDone(task: DownloadTask) {
+  doneFile.filename = task.filename
+  doneFile.path = task.path || ''
+  doneFile.uri = task.uri || ''
+  doneFile.isApk = isApkFile(task.filename)
+  doneVisible.value = true
+}
 
 async function withPat() {
   return await accountStore.getPat(repoStore.currentAccountId)
@@ -404,32 +474,39 @@ async function startDownload(url: string, filename: string, totalHint: number) {
     id: `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     filename,
     percent: 0,
-    status: 'downloading'
+    status: 'downloading',
+    size: totalHint || 0
   })
   tasks.value.unshift(task)
   saveTask(task)
-  // Android：软件内原生流式下载，App 内显示真实进度，完成后保存到系统下载目录
+  // Android 13+ 需运行时授权，否则下载完成弹不出系统通知
+  if (isAndroidClient()) requestAndroidNotificationPermission()
+  // Android：软件内原生流式下载，App 内显示真实进度，完成后保存到系统下载目录并发通知
   if (
     startNativeDownload(task.id, url, headers, filename, {
       onProgress: (loaded, total) => {
         task.percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : Math.min(99, Math.round((loaded / (totalHint || 1)) * 100))
       },
-      onDone: path => {
+      onDone: saved => {
         task.percent = 100
         task.status = 'done'
+        task.path = saved.path
+        task.uri = saved.uri
         saveTask(task)
-        ElMessage.success(`${filename} 下载完成，已保存到 ${path}`)
-        logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成（软件内）`, level: 'success' })
+        showDone(task)
+        ElMessage.success(`${filename} 下载完成，已保存到 ${saved.path}`)
+        logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成（软件内，保存到 ${saved.path}）`, level: 'success' })
       },
       onError: msg => {
         task.status = 'error'
+        task.error = msg
         saveTask(task)
         ElMessage.error(`下载失败：${msg}`)
         logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载失败：${msg}`, level: 'error' })
       }
     })
   ) {
-    ElMessage.success('已开始软件内下载，进度可在下载任务中查看')
+    ElMessage.success('已开始软件内下载，完成后可在下载任务中直接打开')
     return
   }
   // Web/Windows：blob 流式下载，进度可视化
@@ -440,14 +517,60 @@ async function startDownload(url: string, filename: string, totalHint: number) {
     blobDownload(res.data, filename)
     task.percent = 100
     task.status = 'done'
+    task.path = '浏览器默认下载目录'
     ElMessage.success(`${filename} 下载完成（全程软件内闭环）`)
     logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成`, level: 'success' })
   } else {
     task.status = 'error'
+    task.error = res.msg
     ElMessage.error(`下载失败：${res.msg}`)
     logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载失败：${res.msg}`, level: 'error' })
   }
   saveTask(task)
+}
+
+/* ---------- 下载结果的打开 / 安装 / 分享 ---------- */
+
+function isTaskApk(t: DownloadTask): boolean {
+  return isApkFile(t.filename)
+}
+
+function openUri(uri: string) {
+  if (openNativeFile(uri)) return
+  ElMessage.info('当前环境不支持直接打开，请在系统下载目录查看')
+}
+
+function openTask(t: DownloadTask) {
+  if (!t.uri) {
+    ElMessage.info('该记录没有文件地址，请到系统下载目录查看')
+    return
+  }
+  openUri(t.uri)
+}
+
+function installTask(t: DownloadTask) {
+  if (!t.uri) {
+    ElMessage.info('该记录没有文件地址，请到系统下载目录查看')
+    return
+  }
+  if (!installNativeApk(t.uri)) ElMessage.info('当前环境不支持直接安装')
+}
+
+function shareTask(t: DownloadTask) {
+  if (!t.uri) return
+  if (!shareNativeFile(t.uri, guessMimeByName(t.filename))) ElMessage.info('当前环境不支持分享')
+}
+
+function openDone() {
+  if (doneFile.uri) openUri(doneFile.uri)
+}
+
+function installDone() {
+  if (doneFile.uri && !installNativeApk(doneFile.uri)) ElMessage.info('当前环境不支持直接安装')
+}
+
+function openDir() {
+  if (!openNativeDownloadDir()) ElMessage.info('请到系统文件管理的下载目录查看')
 }
 
 async function downloadAsset(asset: ReleaseAsset) {
@@ -460,12 +583,21 @@ async function downloadSource(url: string, filename: string) {
 
 /* ---------- 下载任务持久化（IndexedDB via utils/db） ---------- */
 function saveTask(task: DownloadTask) {
-  saveDownload({ id: task.id, filename: task.filename, percent: task.percent, status: task.status })
+  saveDownload({
+    id: task.id,
+    filename: task.filename,
+    percent: task.percent,
+    status: task.status,
+    path: task.path,
+    uri: task.uri,
+    size: task.size,
+    error: task.error
+  })
 }
 
 async function loadTasks() {
   tasks.value = (await listDownloads()).map(t =>
-    t.status === 'downloading' ? { ...t, status: 'error' as const } : { ...t }
+    t.status === 'downloading' ? { ...t, status: 'error' as const, error: t.error || '已中断' } : { ...t }
   )
 }
 
@@ -480,7 +612,9 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
 onMounted(() => {
   loadReleases()
   loadTasks()
+  setNativeMessageHandler(msg => ElMessage.warning(msg))
 })
+onBeforeUnmount(() => setNativeMessageHandler(null))
 </script>
 
 <style scoped>
@@ -519,5 +653,26 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.m-done-popup {
+  width: 84%;
+  max-width: 420px;
+}
+.m-done-name {
+  white-space: normal;
+  word-break: break-all;
+  text-align: center;
+  color: var(--text-main);
+  font-size: 13px;
+}
+.m-done-path {
+  white-space: normal;
+  word-break: break-all;
+  text-align: center;
+  margin-top: 8px;
+}
+.m-done-actions {
+  justify-content: center;
+  margin-top: 16px;
 }
 </style>

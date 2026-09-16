@@ -13,6 +13,7 @@ export default defineConfig({
   },
   server: {
     port: 5176,
+    allowedHosts: ['.monkeycode-ai.online'],
     proxy: {
       '/api.github.com': {
         target: 'https://api.github.com',

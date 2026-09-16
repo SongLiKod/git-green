@@ -38,6 +38,9 @@
           <el-menu-item index="/pull">
             <el-icon><Connection /></el-icon><template #title>PullRequest</template>
           </el-menu-item>
+          <el-menu-item index="/download">
+            <el-icon><FolderOpened /></el-icon><template #title>我的下载</template>
+          </el-menu-item>
           <el-menu-item index="/log">
             <el-icon><Notebook /></el-icon><template #title>操作日志</template>
           </el-menu-item>
@@ -168,7 +171,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Folder, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, Monitor, Sunny, Moon, RefreshRight, Odometer, Tickets, Connection } from '@element-plus/icons-vue'
+import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, Monitor, Sunny, Moon, RefreshRight, Odometer, Tickets, Connection } from '@element-plus/icons-vue'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
 import AppLock from '@/components/AppLock.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -201,6 +204,7 @@ const mobileTabs: { path: string; title: string; icon?: unknown; menu?: boolean 
   { path: '/dashboard', title: '首页', icon: Odometer },
   { path: '/account', title: '账号', icon: User },
   { path: '', title: '仓库', menu: true },
+  { path: '/download', title: '下载', icon: FolderOpened },
   { path: '/log', title: '日志', icon: Notebook },
   { path: '/settings', title: '设置', icon: Setting }
 ]

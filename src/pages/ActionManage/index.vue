@@ -959,7 +959,7 @@ function downloadErrorLog() {
   const blob = new Blob([runErrorRaw.value], { type: 'text/plain' })
   if (
     saveNativeBlob(`log-${Date.now()}`, name, blob, {
-      onDone: path => ElMessage.success(`错误日志已保存到 ${path}`),
+      onDone: saved => ElMessage.success(`错误日志已保存到 ${saved.path}`),
       onError: msg => ElMessage.error(`保存失败：${msg}`)
     })
   ) {
@@ -984,8 +984,8 @@ async function downloadArtifact(art: RunArtifact) {
         { ...auth(pat), Accept: 'application/vnd.github+json' },
         `${art.name}.zip`,
         {
-          onDone: path => {
-            ElMessage.success(`已保存到 ${path}`)
+          onDone: saved => {
+            ElMessage.success(`已保存到 ${saved.path}`)
             logStore.write({ module: 'action', action: '下载Artifact', detail: `${art.name} @ #${resultRun.value?.run_number || ''}` })
           },
           onError: msg => ElMessage.error(`下载失败：${msg}`)

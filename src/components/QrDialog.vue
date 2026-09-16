@@ -63,7 +63,7 @@ function savePng() {
   const blob = new Blob([arr], { type: 'image/png' })
   if (
     saveNativeBlob(`qr-${Date.now()}`, name, blob, {
-      onDone: path => ElMessage.success(`二维码已保存到 ${path}`),
+      onDone: saved => ElMessage.success(`二维码已保存到 ${saved.path}`),
       onError: msg => ElMessage.error(`保存失败：${msg}`)
     })
   ) {
