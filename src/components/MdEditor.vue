@@ -308,6 +308,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 .md-editor-preview {
   padding: 8px 10px;
+  min-height: v-bind(editorMinHeight);
   max-height: v-bind(editorMaxHeight);
   overflow: auto;
 }
