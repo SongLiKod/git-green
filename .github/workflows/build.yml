@@ -8,6 +8,11 @@ on:
         required: false
         default: ''
         type: string
+      prerelease:
+        description: '标记为预发布（pre-release）'
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [main]
     tags: ['v*']
@@ -122,15 +127,49 @@ jobs:
         id: tag
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
-            echo "name=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.version }}"
+            PRE="${{ inputs.prerelease }}"
           else
-            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF#refs/tags/}"
+            PRE="false"
           fi
+          if [[ "$TAG" == *-* ]]; then
+            PRE="true"
+          fi
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release files
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          mkdir -p upload
+          echo "Downloaded artifact tree:"
+          find dist-artifacts -type f -print
+          mapfile -t FILES < <(find dist-artifacts -type f | sort)
+          for SRC in "${FILES[@]}"; do
+            BASE=$(basename "$SRC")
+            case "$BASE" in
+              app-release.apk|*-release.apk)
+                DEST="upload/GitGreen-${VERSION}.apk"
+                ;;
+              app-debug.apk|*-debug.apk)
+                DEST="upload/GitGreen-${VERSION}-debug.apk"
+                ;;
+              *)
+                DEST="upload/$BASE"
+                ;;
+            esac
+            cp "$SRC" "$DEST"
+            echo "Prepared $DEST from $SRC"
+          done
+          ls -lh upload/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
-          files: dist-artifacts/**/*
+          files: upload/*
           draft: false
+          prerelease: ${{ steps.tag.outputs.prerelease }}
           generate_release_notes: true
