@@ -26,9 +26,12 @@ const html = computed(() => {
 
 <style>
 .md-render {
+  display: block;
+  color: var(--text-main, inherit);
   font-size: 13px;
   line-height: 1.7;
   word-break: break-word;
+  white-space: normal;
 }
 .md-render > *:first-child {
   margin-top: 0;
@@ -43,37 +46,62 @@ const html = computed(() => {
 .md-render h5,
 .md-render h6 {
   margin: 14px 0 8px;
-  font-weight: 600;
-  line-height: 1.4;
+  color: var(--text-main, inherit);
+  font-weight: 700;
+  line-height: 1.35;
 }
 .md-render h1 {
-  font-size: 1.5em;
+  font-size: 22px;
 }
 .md-render h2 {
-  font-size: 1.3em;
+  font-size: 18px;
 }
 .md-render h3 {
-  font-size: 1.15em;
+  font-size: 16px;
 }
 .md-render h4,
 .md-render h5,
 .md-render h6 {
-  font-size: 1em;
+  font-size: 14px;
 }
 .md-render p {
   margin: 0 0 10px;
 }
+.md-render strong {
+  font-weight: 700;
+}
+.md-render em {
+  font-style: italic;
+}
+.md-render s,
+.md-render del {
+  text-decoration: line-through;
+}
 .md-render ul,
 .md-render ol {
   margin: 0 0 10px;
-  padding-left: 22px;
+  padding-left: 1.6em;
+}
+.md-render ul {
+  list-style: disc outside;
+}
+.md-render ol {
+  list-style: decimal outside;
+}
+.md-render ul ul {
+  list-style: circle outside;
 }
 .md-render li {
   margin: 2px 0;
+  display: list-item;
+}
+.md-render ul.contains-task-list {
+  list-style: none;
+  padding-left: 4px;
 }
 .md-render li.task-list-item {
   list-style: none;
-  margin-left: -20px;
+  margin-left: 0;
 }
 .md-render a {
   color: var(--color-primary, #409eff);
@@ -135,5 +163,6 @@ const html = computed(() => {
 .md-render input[type='checkbox'] {
   margin-right: 6px;
   vertical-align: middle;
+  pointer-events: none;
 }
 </style>
