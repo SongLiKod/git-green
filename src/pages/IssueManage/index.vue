@@ -26,9 +26,12 @@
           <div class="m-sub" style="margin-top: 6px">💬 {{ i.comments }}<template v-if="linkedMap[i.number]"> · <van-tag type="primary" plain @click.stop="openLinkedCommit(i.number)">🔗 #{{ shortSha(linkedMap[i.number].sha) }}</van-tag></template></div>
         </div>
 
-        <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
-          <div class="m-popup" v-if="detail">
-            <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
+        <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: detailFs ? '100%' : '86%' }">
+          <div class="m-popup" :class="{ 'm-popup-full': detailFs }" v-if="detail">
+            <div class="m-popup-title-row">
+              <span class="m-popup-title">#{{ detail.number }} {{ detail.title }}</span>
+              <van-button size="mini" plain @click="detailFs = !detailFs">{{ detailFs ? '退出全屏' : '全屏' }}</van-button>
+            </div>
             <div class="m-md-body"><MdRender :source="detail.body" empty-text="（无描述）" /></div>
             <div class="m-actions">
               <van-button size="small" type="primary" plain @click="openEdit(detail)">编辑</van-button>
@@ -162,7 +165,16 @@
           </el-table-column>
         </el-table>
 
-        <el-dialog v-model="detailVisible" :title="detail ? `#${detail.number} ${detail.title}` : ''" width="680px" top="6vh">
+        <el-dialog v-model="detailVisible" width="680px" top="6vh" class="detail-dialog" :fullscreen="detailFs" :show-close="false">
+          <template #header>
+            <div class="dialog-header">
+              <span class="dialog-header-title">{{ detail ? `#${detail.number} ${detail.title}` : '' }}</span>
+              <span class="dialog-header-ops">
+                <el-button link type="primary" @click="detailFs = !detailFs">{{ detailFs ? '退出全屏' : '全屏' }}</el-button>
+                <el-button link @click="detailVisible = false">关闭</el-button>
+              </span>
+            </div>
+          </template>
           <template v-if="detail">
             <MdRender :source="detail.body" empty-text="（无描述）" class="body-render" />
             <div class="sub-title">关联提交（{{ linkedLoading ? '加载中...' : linkedCommits.length }}）</div>
@@ -294,6 +306,7 @@ const saving = ref(false)
 const state = ref('open')
 
 const detailVisible = ref(false)
+const detailFs = ref(false)
 const detail = ref<GitHubIssue | null>(null)
 const comments = ref<IssueComment[]>([])
 const newComment = ref('')
@@ -703,6 +716,10 @@ onMounted(loadIssues)
   flex-direction: column;
   overflow-x: hidden;
 }
+.m-popup.m-popup-full {
+  max-height: 100%;
+  height: 100%;
+}
 .m-popup.m-popup-fill .van-cell-group {
   flex: 1;
   min-height: 0;
@@ -816,6 +833,17 @@ onMounted(loadIssues)
 .commit-dialog.is-fullscreen .el-dialog__body {
   max-height: none;
   height: calc(100vh - 110px);
+}
+.detail-dialog .el-dialog__body {
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+}
+.detail-dialog.is-fullscreen .el-dialog__body {
+  max-height: none;
+  height: calc(100vh - 110px);
+}
+.detail-dialog.is-fullscreen .body-render {
+  max-height: none;
 }
 .form-dialog .el-dialog__body {
   max-height: calc(100vh - 150px);
