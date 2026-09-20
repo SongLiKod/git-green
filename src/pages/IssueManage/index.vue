@@ -294,7 +294,8 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'IssueManage' })
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -316,6 +317,8 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+const route = useRoute()
+const router = useRouter()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const issues = ref<GitHubIssue[]>([])
@@ -714,7 +717,27 @@ async function saveBodyEdit() {
 }
 
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadIssues)
-onMounted(loadIssues)
+
+/* ---------- 深链：/issue?issue=N 自动打开详情（「打开链接」入口使用） ---------- */
+let deepIssueConsumed = false
+async function handleIssueQuery() {
+  const v = String(route.query.issue || '')
+  if (!v) {
+    deepIssueConsumed = false
+    return
+  }
+  if (deepIssueConsumed || !ctx.value) return
+  deepIssueConsumed = true
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  const n = Number(v)
+  if (n > 0) await openDetail({ number: n, title: '' } as GitHubIssue)
+}
+watch(() => route.query.issue, handleIssueQuery)
+onMounted(() => {
+  loadIssues()
+  handleIssueQuery()
+})
 </script>
 
 <style scoped>

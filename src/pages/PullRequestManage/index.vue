@@ -183,7 +183,8 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'PullRequestManage' })
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -207,6 +208,8 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+const route = useRoute()
+const router = useRouter()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
@@ -507,9 +510,27 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
   loadPRs()
   loadBranches()
 })
+
+/* ---------- 深链：/pull?pr=N 自动打开详情（「打开链接」入口使用） ---------- */
+let deepPrConsumed = false
+async function handlePrQuery() {
+  const v = String(route.query.pr || '')
+  if (!v) {
+    deepPrConsumed = false
+    return
+  }
+  if (deepPrConsumed || !ctx.value) return
+  deepPrConsumed = true
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  const n = Number(v)
+  if (n > 0) await openDetail({ number: n } as GitHubPR)
+}
+watch(() => route.query.pr, handlePrQuery)
 onMounted(() => {
   loadPRs()
   loadBranches()
+  handlePrQuery()
 })
 </script>
 

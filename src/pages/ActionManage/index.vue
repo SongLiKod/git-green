@@ -414,6 +414,7 @@
 <script setup lang="ts">
 defineOptions({ name: 'ActionManage' })
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -422,6 +423,7 @@ import { useLogStore } from '@/stores/useLogStore'
 import {
   listWorkflows,
   listRuns,
+  getWorkflowRun,
   triggerWorkflow,
   cancelRun,
   rerunRun,
@@ -456,6 +458,8 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+const route = useRoute()
+const router = useRouter()
 
 /* ---------- 移动端辅助 ---------- */
 const wSheetVisible = ref(false)
@@ -1142,9 +1146,31 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
   if (tab.value === 'vars') loadVars()
 })
 
+/* ---------- 深链：/action?run=N 自动打开运行结果（「打开链接」入口使用） ---------- */
+let deepRunConsumed = false
+async function handleRunQuery() {
+  const v = String(route.query.run || '')
+  if (!v) {
+    deepRunConsumed = false
+    return
+  }
+  if (deepRunConsumed || !ctx.value) return
+  deepRunConsumed = true
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  const n = Number(v)
+  if (!(n > 0)) return
+  const c = ctx.value
+  const pat = await withPat()
+  const res = await getWorkflowRun(pat, c.owner, c.repo, n)
+  if (res.code === 200 && res.data) openRunResult(res.data)
+  else ElMessage.error(`运行记录获取失败：${res.msg}`)
+}
+watch(() => route.query.run, handleRunQuery)
 onMounted(() => {
   loadWorkflows()
   loadRuns()
+  handleRunQuery()
 })
 onBeforeUnmount(() => {
   closeLogs()

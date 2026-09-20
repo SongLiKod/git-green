@@ -12,8 +12,11 @@
         <van-button size="small" plain :type="onlyFavorite ? 'warning' : 'default'" @click="onlyFavorite = !onlyFavorite">
           {{ onlyFavorite ? '看全部' : '只看收藏' }}
         </van-button>
+        <van-button size="small" plain :type="onlyAdHoc ? 'warning' : 'default'" @click="onlyAdHoc = !onlyAdHoc">
+          {{ onlyAdHoc ? '看全部' : '只看外部' }}
+        </van-button>
       </div>
-      <van-empty v-if="displayRepos.length === 0" description="暂无仓库" />
+      <van-empty v-if="displayRepos.length === 0" :description="emptyText" />
       <div v-for="r in displayRepos" :key="r.full_name" class="m-card" @click="openSheet(r)">
         <div class="m-card-head">
           <div class="m-card-title">
@@ -22,7 +25,10 @@
             </div>
             <div class="m-sub">{{ r.description || '暂无简介' }}</div>
           </div>
-          <van-tag :type="r.private ? 'warning' : 'success'">{{ r.private ? '私有' : '公开' }}</van-tag>
+          <div class="m-tags" style="margin-top: 0">
+            <van-tag :type="r.private ? 'warning' : 'success'">{{ r.private ? '私有' : '公开' }}</van-tag>
+            <van-tag v-if="repoStore.isAdHocRepo(r.full_name)" type="default">外部</van-tag>
+          </div>
         </div>
         <div class="m-meta">
           <span>{{ r.language || '-' }}</span>
@@ -39,7 +45,8 @@
           </van-button>
           <van-button size="mini" type="primary" plain @click="enterRepo(r)">进入</van-button>
           <van-button size="mini" plain @click="openClone(r)">克隆</van-button>
-          <van-button size="mini" type="danger" plain @click="onDeleteRepo(r)">删除</van-button>
+          <van-button v-if="repoStore.isAdHocRepo(r.full_name)" size="mini" type="warning" plain @click="onRemoveAdHoc(r)">移除</van-button>
+          <van-button v-else size="mini" type="danger" plain @click="onDeleteRepo(r)">删除</van-button>
         </div>
       </div>
 
@@ -148,7 +155,10 @@
           <template #header>
             <div class="card-header">
               <span>{{ searchKw ? `全局搜索：${searchKw}` : accountTitle }}</span>
-              <el-checkbox v-model="onlyFavorite">只看收藏</el-checkbox>
+              <div>
+                <el-checkbox v-model="onlyFavorite">只看收藏</el-checkbox>
+                <el-checkbox v-model="onlyAdHoc">只看外部</el-checkbox>
+              </div>
             </div>
           </template>
           <el-table :data="displayRepos" border stripe v-loading="loading" max-height="480">
@@ -160,6 +170,7 @@
                   <span class="link-text" @click="selectRepo(row)">{{ row.full_name }}</span>
                   <el-tag size="small" :type="row.private ? 'warning' : 'success'">{{ row.private ? '私有' : '公开' }}</el-tag>
                   <el-tag v-if="row.archived" size="small" type="info">已归档</el-tag>
+                  <el-tag v-if="repoStore.isAdHocRepo(row.full_name)" size="small" type="info" effect="plain">外部</el-tag>
                 </div>
                 <div class="repo-desc">{{ row.description || '暂无简介' }}</div>
               </template>
@@ -196,11 +207,12 @@
                 </el-button>
                 <el-button link type="primary" @click="openClone(row)">克隆</el-button>
                 <el-button link @click="selectRepo(row)">进入</el-button>
-                <el-button link type="danger" @click="onDeleteRepo(row)">删除</el-button>
+                <el-button v-if="repoStore.isAdHocRepo(row.full_name)" link type="warning" @click="onRemoveAdHoc(row)">移除</el-button>
+                <el-button v-else link type="danger" @click="onDeleteRepo(row)">删除</el-button>
               </template>
             </el-table-column>
             <template #empty>
-              <span class="empty-text">暂无仓库，请从左侧选择账号或点击「新建远程仓库」</span>
+              <span class="empty-text">{{ emptyText }}</span>
             </template>
           </el-table>
         </el-card>
@@ -306,6 +318,7 @@ const route = useRoute()
 
 const searchKw = ref('')
 const onlyFavorite = ref(false)
+const onlyAdHoc = ref(false)
 const createVisible = ref(false)
 const createForm = reactive({ name: '', description: '', private: false })
 const currentKey = ref('')
@@ -335,7 +348,7 @@ const treeData = computed<TreeNode[]>(() =>
       id: acc.id,
       children: repoStore.sortedRepos(repos).map(r => ({
         key: `repo:${acc.id}:${r.full_name}`,
-        label: r.name,
+        label: repoStore.isAdHocRepo(r.full_name) ? `${r.name}（外部）` : r.name,
         isAccount: false,
         id: r.full_name
       }))
@@ -343,17 +356,27 @@ const treeData = computed<TreeNode[]>(() =>
   })
 )
 
+/** 按「只看收藏 / 只看外部」过滤 */
+function applyFilters(list: GitHubRepo[]): GitHubRepo[] {
+  return list.filter(
+    r =>
+      (!onlyFavorite.value || repoStore.getMeta(r.full_name).favorite) &&
+      (!onlyAdHoc.value || repoStore.isAdHocRepo(r.full_name))
+  )
+}
+
 const displayRepos = computed<GitHubRepo[]>(() => {
   if (searchKw.value.trim()) {
-    return repoStore
-      .search(searchKw.value)
-      .map(item => item.repo)
-      .filter(r => !onlyFavorite.value || repoStore.getMeta(r.full_name).favorite)
+    return applyFilters(repoStore.search(searchKw.value).map(item => item.repo))
   }
-  return repoStore.sortedRepos(repoStore.currentRepos).filter(
-    r => !onlyFavorite.value || repoStore.getMeta(r.full_name).favorite
-  )
+  return applyFilters(repoStore.sortedRepos(repoStore.currentRepos))
 })
+
+const emptyText = computed(() =>
+  onlyAdHoc.value
+    ? '暂无外部仓库，可通过顶栏「打开链接」接入账号外的仓库'
+    : '暂无仓库，请从左侧选择账号或点击「新建远程仓库」'
+)
 
 const repoGroups = computed(() => {
   const groups = new Set<string>()
@@ -495,6 +518,22 @@ async function onDeleteRepo(row: GitHubRepo) {
     return
   }
   await repoStore.deleteRepo(row.owner.login, row.name)
+}
+
+/** 移除「打开链接」临时接入的外部仓库（仅清理本地，不触碰远程） */
+async function onRemoveAdHoc(row: GitHubRepo) {
+  try {
+    await ElMessageBox.confirm(
+      `将从本地列表移除外部仓库「${row.full_name}」（仅清理应用内记录，不影响远程仓库；之后可通过「打开链接」再次接入）。`,
+      '移除外部仓库',
+      { type: 'warning', confirmButtonText: '确认移除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  const ok = await repoStore.removeAdHocRepo(row.full_name)
+  if (ok) ElMessage.success(`外部仓库 ${row.full_name} 已从本地移除`)
+  else ElMessage.warning('未找到该外部仓库记录')
 }
 
 /* ---------- 本地 Git（仅 Windows / Electron） ---------- */

@@ -1,4 +1,4 @@
-import service, { auth, type ApiResult } from './request'
+import service, { auth, encPath, type ApiResult } from './request'
 
 export interface ReleaseAsset {
   id: number
@@ -43,6 +43,13 @@ export function listReleases(token: string, owner: string, repo: string): Promis
 /** Release 版本详情 */
 export function getReleaseDetail(token: string, owner: string, repo: string, id: number): Promise<ApiResult<Release>> {
   return service.get(`/repos/${owner}/${repo}/releases/${id}`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<Release>>
+}
+
+/** 按标签名获取 Release 详情（深链跳转使用） */
+export function getReleaseByTag(token: string, owner: string, repo: string, tag: string): Promise<ApiResult<Release>> {
+  return service.get(`/repos/${owner}/${repo}/releases/tags/${encPath(tag)}`, {
     headers: auth(token)
   }) as unknown as Promise<ApiResult<Release>>
 }

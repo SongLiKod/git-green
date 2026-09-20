@@ -61,6 +61,13 @@ export function listRuns(
   }) as unknown as Promise<ApiResult<{ workflow_runs: WorkflowRun[]; total_count: number }>>
 }
 
+/** 单个运行记录详情（深链跳转用） */
+export function getWorkflowRun(token: string, owner: string, repo: string, runId: number): Promise<ApiResult<WorkflowRun>> {
+  return service.get(`/repos/${owner}/${repo}/actions/runs/${runId}`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<WorkflowRun>>
+}
+
 /** 手动触发流水线（workflow_dispatch），inputs 为 yml 中定义的工作流输入参数 */
 export function triggerWorkflow(
   token: string,

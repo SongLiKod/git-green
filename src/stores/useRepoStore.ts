@@ -15,10 +15,20 @@ export interface RepoMeta {
 const META_KEY = 'gitgreen_repo_meta'
 const CURRENT_ACCOUNT_KEY = 'gitgreen_current_account'
 const CURRENT_REPO_KEY = 'gitgreen_current_repo'
+const ADHOC_KEY = 'gitgreen_adhoc_repos'
 
 function loadMeta(): Record<string, RepoMeta> {
   try {
     return JSON.parse(localStorage.getItem(META_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function loadAdHoc(): Record<string, GitHubRepo[]> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ADHOC_KEY) || '{}')
+    return raw && typeof raw === 'object' ? raw : {}
   } catch {
     return {}
   }
@@ -34,6 +44,8 @@ export const useRepoStore = defineStore('repo', () => {
 
   /** accountId -> repos */
   const reposByAccount = ref<Record<string, GitHubRepo[]>>({})
+  /** 「打开链接」临时接入的外部仓库（非拥有/协作）：accountId -> repos，本地持久化 */
+  const adHocRepos = ref<Record<string, GitHubRepo[]>>(loadAdHoc())
   const loadingMap = ref<Record<string, boolean>>({})
   const metaMap = ref<Record<string, RepoMeta>>(loadMeta())
   const currentAccountId = ref<string>(localStorage.getItem(CURRENT_ACCOUNT_KEY) || '')
@@ -57,6 +69,37 @@ export const useRepoStore = defineStore('repo', () => {
 
   function persistMeta() {
     localStorage.setItem(META_KEY, JSON.stringify(metaMap.value))
+  }
+
+  function persistAdHoc() {
+    localStorage.setItem(ADHOC_KEY, JSON.stringify(adHocRepos.value))
+  }
+
+  /** 是否为「打开链接」临时接入的外部仓库（任意账号维度） */
+  function isAdHocRepo(fullName: string): boolean {
+    return Object.values(adHocRepos.value).some(list => (list || []).some(r => r.full_name === fullName))
+  }
+
+  /** 从本地移除外部仓库（仅清理本地注入，不触碰远程数据） */
+  async function removeAdHocRepo(fullName: string): Promise<boolean> {
+    let hit = false
+    for (const [accountId, list] of Object.entries(adHocRepos.value)) {
+      if (!list?.some(r => r.full_name === fullName)) continue
+      hit = true
+      adHocRepos.value[accountId] = list.filter(r => r.full_name !== fullName)
+      const repos = reposByAccount.value[accountId]
+      if (repos) {
+        const rest = repos.filter(r => r.full_name !== fullName)
+        reposByAccount.value[accountId] = rest
+        if (accountId === currentAccountId.value && currentRepoFullName.value === fullName) {
+          setCurrentRepo(rest[0]?.full_name || '')
+        }
+      }
+    }
+    if (!hit) return false
+    persistAdHoc()
+    await logStore.write({ module: 'repo', action: '移除外部仓库', detail: fullName, level: 'warning' })
+    return true
   }
 
   /** 备份还原/重置后重新读取本地收藏分组 */
@@ -101,14 +144,22 @@ export const useRepoStore = defineStore('repo', () => {
     const res = await repoApi.getUserRepos(pat)
     loadingMap.value[accountId] = false
     if (res.code === 200) {
-      reposByAccount.value[accountId] = res.data!
+      const fresh = res.data!
+      const adHocSaved = adHocRepos.value[accountId] || []
+      const adhoc = adHocSaved.filter(a => !fresh.some(r => r.full_name === a.full_name))
+      if (adhoc.length !== adHocSaved.length) {
+        adHocRepos.value[accountId] = adhoc
+        persistAdHoc()
+      }
+      reposByAccount.value[accountId] = [...fresh, ...adhoc]
       // 恢复持久化的仓库选择；失效（如已删除）则回退到首个仓库
       if (accountId === currentAccountId.value) {
         const saved = localStorage.getItem(CURRENT_REPO_KEY) || ''
-        const exists = res.data!.some(r => r.full_name === currentRepoFullName.value)
+        const list = reposByAccount.value[accountId]
+        const exists = list.some(r => r.full_name === currentRepoFullName.value)
         if (!exists) {
-          if (res.data!.some(r => r.full_name === saved)) currentRepoFullName.value = saved
-          else if (res.data!.length > 0) setCurrentRepo(res.data![0].full_name)
+          if (list.some(r => r.full_name === saved)) currentRepoFullName.value = saved
+          else if (list.length > 0) setCurrentRepo(list[0].full_name)
           else setCurrentRepo('')
         }
       }
@@ -176,6 +227,33 @@ export const useRepoStore = defineStore('repo', () => {
     setCurrentRepo(fullName)
   }
 
+  /** 打开非本账号列表的 GitHub 仓库（「打开链接」入口）：拉取元数据注入当前账号列表并选中，本地持久化 */
+  async function openExternalRepo(owner: string, repo: string): Promise<boolean> {
+    const accountId = currentAccountId.value
+    if (!accountId) {
+      ElMessage.warning('请先在账号管理中添加GitHub账号')
+      return false
+    }
+    const fullName = `${owner}/${repo}`
+    const pat = await accountStore.getPat(accountId)
+    if (!pat) return false
+    const res = await repoApi.getRepoSetting(pat, owner, repo)
+    if (res.code !== 200 || !res.data) {
+      ElMessage.error(`仓库获取失败（不存在或无权访问）：${res.msg}`)
+      return false
+    }
+    const list = reposByAccount.value[accountId] || []
+    if (!list.some(r => r.full_name === fullName)) reposByAccount.value[accountId] = [...list, res.data]
+    const adHocSaved = adHocRepos.value[accountId] || []
+    if (!adHocSaved.some(r => r.full_name === fullName)) {
+      adHocRepos.value[accountId] = [res.data, ...adHocSaved]
+      persistAdHoc()
+    }
+    setCurrentRepo(fullName)
+    await logStore.write({ module: 'repo', action: '打开外部仓库', detail: fullName })
+    return true
+  }
+
   /** 新建远程仓库 */
   async function createRepo(payload: { name: string; description?: string; private?: boolean }) {
     const pat = await accountStore.getPat(currentAccountId.value)
@@ -208,6 +286,7 @@ export const useRepoStore = defineStore('repo', () => {
 
   return {
     reposByAccount,
+    adHocRepos,
     loadingMap,
     metaMap,
     currentAccountId,
@@ -225,6 +304,9 @@ export const useRepoStore = defineStore('repo', () => {
     setCurrentAccount,
     setCurrentRepo,
     selectRepo,
+    openExternalRepo,
+    isAdHocRepo,
+    removeAdHocRepo,
     findAccountIdByRepo,
     currentOwnerName,
     search,

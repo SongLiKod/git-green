@@ -76,8 +76,12 @@
                 :loading="repoLoading"
                 @update:model-value="(v: any) => repoStore.setCurrentRepo(String(v))"
               >
-                <el-option v-for="r in repoStore.currentRepos" :key="r.full_name" :label="r.full_name" :value="r.full_name" />
+                <el-option v-for="r in repoStore.currentRepos" :key="r.full_name" :label="r.full_name" :value="r.full_name">
+                  <span>{{ r.full_name }}</span>
+                  <el-tag v-if="repoStore.isAdHocRepo(r.full_name)" size="small" type="info" effect="plain" style="margin-left: 8px">外部</el-tag>
+                </el-option>
               </el-select>
+              <el-tag v-if="repoStore.currentRepoFullName && repoStore.isAdHocRepo(repoStore.currentRepoFullName)" size="small" type="info" effect="plain">外部</el-tag>
               <el-button link type="primary" @click="repoStore.refreshCurrent()">刷新</el-button>
             </template>
             <el-tag v-if="accountStore.activeAccount" :type="statusType" effect="dark" size="small">
@@ -86,7 +90,10 @@
             <span class="platform-tag">{{ platformName }}</span>
           </div>
           <div class="header-right">
-            <ThemeSwitch />
+            <el-button link type="primary" @click="openLinkVisible = true">
+              <el-icon><Link /></el-icon>
+              <span style="margin-left: 4px">打开链接</span>
+            </el-button>
           </div>
         </el-header>
         <!-- 移动端顶栏 -->
@@ -103,10 +110,15 @@
               :loading="repoLoading"
               @update:model-value="(v: any) => repoStore.setCurrentRepo(String(v))"
             >
-              <el-option v-for="r in repoStore.currentRepos" :key="r.full_name" :label="r.name" :value="r.full_name" />
+              <el-option
+                v-for="r in repoStore.currentRepos"
+                :key="r.full_name"
+                :label="repoStore.isAdHocRepo(r.full_name) ? `${r.name}（外部）` : r.name"
+                :value="r.full_name"
+              />
             </el-select>
-            <div class="icon-btn" title="主题切换" @click="cycleTheme">
-              <el-icon :size="18"><Monitor v-if="themeStore.themeMode === 'system'" /><Sunny v-else-if="themeStore.themeMode === 'light'" /><Moon v-else /></el-icon>
+            <div class="icon-btn" title="打开链接" @click="openLinkVisible = true">
+              <el-icon :size="18"><Link /></el-icon>
             </div>
             <div class="icon-btn" title="刷新" @click="onMobileRefresh">
               <el-icon :size="18"><RefreshRight /></el-icon>
@@ -163,6 +175,7 @@
           title="仓库功能"
           @select="onRepoMenuSelect"
         />
+        <OpenLinkDialog v-model="openLinkVisible" />
       </el-container>
     </el-container>
   </div>
@@ -171,14 +184,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, Monitor, Sunny, Moon, RefreshRight, Odometer, Tickets, Connection } from '@element-plus/icons-vue'
-import ThemeSwitch from '@/components/ThemeSwitch.vue'
+import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, RefreshRight, Odometer, Tickets, Connection, Link } from '@element-plus/icons-vue'
 import AppLock from '@/components/AppLock.vue'
+import OpenLinkDialog from '@/components/OpenLinkDialog.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { useThemeStore } from '@/stores/useThemeStore'
-import type { ThemeMode } from '@/stores/useThemeStore'
 import { useTabStore } from '@/stores/useTabStore'
 import { initCrypto } from '@/utils/crypto'
 import { initLock } from '@/utils/lockService'
@@ -189,7 +200,6 @@ const router = useRouter()
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settingsStore = useSettingsStore()
-const themeStore = useThemeStore()
 const tabStore = useTabStore()
 
 const booted = ref(false)
@@ -212,6 +222,7 @@ const mobileTabs: { path: string; title: string; icon?: unknown; menu?: boolean 
 /* 仓库功能菜单（移动端底部「仓库」Tab 弹出） */
 const repoPages = ['/repo', '/repo-setting', '/branch', '/commits', '/action', '/release', '/file', '/issue', '/pull']
 const repoMenuVisible = ref(false)
+const openLinkVisible = ref(false)
 const repoTabActive = computed(() => repoPages.includes(route.path))
 const repoTabLabel = computed(() => (repoTabActive.value ? currentTitle.value : '仓库'))
 const repoMenuBase = [
@@ -225,21 +236,20 @@ const repoMenuBase = [
   { name: 'Issue管理', path: '/issue' },
   { name: 'PullRequest', path: '/pull' }
 ]
-/** 当前所在仓库功能项在菜单中高亮标注「当前」 */
-const repoMenuActions = computed(() =>
-  repoMenuBase.map(a =>
+/** 当前所在仓库功能项在菜单中高亮标注「当前」，末尾追加「打开链接」入口 */
+const repoMenuActions = computed(() => [
+  ...repoMenuBase.map(a =>
     route.path === a.path ? { ...a, subname: '当前使用中', color: 'var(--color-primary)' } : { ...a }
-  )
-)
+  ),
+  { name: '打开链接', subname: '粘贴 GitHub URL 跳转' }
+])
 
-function onRepoMenuSelect(action: { path: string }) {
-  router.push(action.path)
-}
-
-function cycleTheme() {
-  const order: ThemeMode[] = ['system', 'light', 'dark']
-  const idx = order.indexOf(themeStore.themeMode)
-  themeStore.setThemeMode(order[(idx + 1) % order.length])
+function onRepoMenuSelect(action: { path?: string; name?: string }) {
+  if (action.name === '打开链接') {
+    openLinkVisible.value = true
+    return
+  }
+  if (action.path) router.push(action.path)
 }
 
 function onMobileRefresh() {
