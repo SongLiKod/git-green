@@ -95,7 +95,8 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'CommitHistory' })
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -113,6 +114,8 @@ const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const isMobile = useIsMobile()
+const route = useRoute()
+const router = useRouter()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 
@@ -237,9 +240,26 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
   loadBranches()
   loadCommits(true)
 })
+
+/* ---------- 深链：/commits?sha=X 自动打开提交详情（「打开链接」入口使用） ---------- */
+let deepShaConsumed = false
+async function handleShaQuery() {
+  const v = String(route.query.sha || '')
+  if (!v) {
+    deepShaConsumed = false
+    return
+  }
+  if (deepShaConsumed || !ctx.value) return
+  deepShaConsumed = true
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  await openCommit({ sha: v } as GithubCommitInfo)
+}
+watch(() => route.query.sha, handleShaQuery)
 onMounted(() => {
   loadBranches()
   loadCommits(true)
+  handleShaQuery()
 })
 </script>
 

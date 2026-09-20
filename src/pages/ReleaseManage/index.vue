@@ -254,7 +254,8 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'ReleaseManage' })
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
@@ -302,6 +303,8 @@ const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
 const isAndroid = computed(() => isAndroidClient())
+const route = useRoute()
+const router = useRouter()
 
 const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
@@ -609,10 +612,31 @@ async function removeTask(t: DownloadTask) {
 }
 
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadReleases)
+
+/* ---------- 深链：/release?tag=X 自动打开版本详情（「打开链接」入口使用） ---------- */
+let deepTagConsumed = false
+async function handleTagQuery() {
+  const v = String(route.query.tag || '')
+  if (!v) {
+    deepTagConsumed = false
+    return
+  }
+  if (deepTagConsumed || !ctx.value) return
+  deepTagConsumed = true
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  const c = ctx.value
+  const pat = await withPat()
+  const res = await releaseApi.getReleaseByTag(pat, c.owner, c.repo, v)
+  if (res.code === 200 && res.data) openDetail(res.data)
+  else ElMessage.error(`Release获取失败：${res.msg}`)
+}
+watch(() => route.query.tag, handleTagQuery)
 onMounted(() => {
   loadReleases()
   loadTasks()
   setNativeMessageHandler(msg => ElMessage.warning(msg))
+  handleTagQuery()
 })
 onBeforeUnmount(() => setNativeMessageHandler(null))
 </script>

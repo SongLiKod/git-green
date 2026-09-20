@@ -310,8 +310,9 @@ async function initRepo() {
 let previewConsumed = false
 async function handlePreviewQuery() {
   const p = String(route.query.preview || '')
+  const dir = String(route.query.dir || '')
   const refVal = String(route.query.ref || '')
-  if (!p) {
+  if (!p && !dir) {
     previewConsumed = false
     return
   }
@@ -319,10 +320,15 @@ async function handlePreviewQuery() {
   previewConsumed = true
   router.replace({ query: {} }).catch(() => {})
   await nextTick()
-  previewAtRef(p, refVal)
+  if (p) {
+    previewAtRef(p, refVal)
+  } else {
+    if (refVal) branch.value = refVal
+    loadDir(dir)
+  }
 }
 
-watch(() => route.query.preview, handlePreviewQuery)
+watch(() => [route.query.preview, route.query.dir], handlePreviewQuery)
 
 /** 按指定 commit/ref 拉取文件内容并打开预览（从 Issue 提交跳转使用） */
 async function previewAtRef(path: string, refVal: string) {
