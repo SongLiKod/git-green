@@ -26,12 +26,24 @@
           <div class="m-sub" style="margin-top: 6px">💬 {{ i.comments }}<template v-if="linkedMap[i.number]"> · <van-tag type="primary" plain @click.stop="openLinkedCommit(i.number)">🔗 #{{ shortSha(linkedMap[i.number].sha) }}</van-tag></template></div>
         </div>
 
-        <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
-          <div class="m-popup" v-if="detail">
-            <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
-            <div class="m-md-body"><MdRender :source="detail.body" empty-text="（无描述）" /></div>
+        <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: detailFs ? '100%' : '86%' }">
+          <div class="m-popup" :class="{ 'm-popup-full': detailFs }" v-if="detail">
+            <div class="m-popup-title-row">
+              <span class="m-popup-title">#{{ detail.number }} {{ detail.title }}</span>
+              <van-button size="mini" plain @click="copyText(detail.title)">复制标题</van-button>
+              <van-button size="mini" plain @click="detailFs = !detailFs">{{ detailFs ? '退出全屏' : '全屏' }}</van-button>
+            </div>
+            <div v-if="!bodyEditing" class="m-md-body"><MdRender :source="detail.body" empty-text="（无描述）" /></div>
+            <template v-else>
+              <div class="m-md-body"><MdEditor v-model="bodyDraft" placeholder="支持 Markdown 语法" min-height="120px" /></div>
+              <div class="m-actions">
+                <van-button size="small" type="primary" :loading="bodySaving" @click="saveBodyEdit">保存描述</van-button>
+                <van-button size="small" @click="cancelBodyEdit">取消</van-button>
+              </div>
+            </template>
             <div class="m-actions">
-              <van-button size="small" type="primary" plain @click="openEdit(detail)">编辑</van-button>
+              <van-button v-if="!bodyEditing" size="small" type="primary" plain @click="startBodyEdit">编辑描述</van-button>
+              <van-button v-if="!bodyEditing" size="small" type="primary" plain @click="openEdit(detail)">编辑</van-button>
               <van-button v-if="detail.state === 'open'" size="small" type="warning" plain @click="toggleState(detail)">关闭</van-button>
               <van-button v-else size="small" type="success" plain @click="toggleState(detail)">重新打开</van-button>
             </div>
@@ -162,9 +174,27 @@
           </el-table-column>
         </el-table>
 
-        <el-dialog v-model="detailVisible" :title="detail ? `#${detail.number} ${detail.title}` : ''" width="680px" top="6vh">
+        <el-dialog v-model="detailVisible" width="680px" top="6vh" class="detail-dialog" :fullscreen="detailFs" :show-close="false">
+          <template #header>
+            <div class="dialog-header">
+              <span class="dialog-header-title">{{ detail ? `#${detail.number} ${detail.title}` : '' }}</span>
+              <span class="dialog-header-ops">
+                <el-button v-if="detail" link type="primary" @click="copyText(detail.title)">复制标题</el-button>
+                <el-button v-if="detail && !bodyEditing" link type="primary" @click="startBodyEdit">编辑描述</el-button>
+                <el-button link type="primary" @click="detailFs = !detailFs">{{ detailFs ? '退出全屏' : '全屏' }}</el-button>
+                <el-button link @click="detailVisible = false">关闭</el-button>
+              </span>
+            </div>
+          </template>
           <template v-if="detail">
-            <MdRender :source="detail.body" empty-text="（无描述）" class="body-render" />
+            <MdRender v-if="!bodyEditing" :source="detail.body" empty-text="（无描述）" class="body-render" />
+            <template v-else>
+              <MdEditor v-model="bodyDraft" placeholder="支持 Markdown 语法" min-height="120px" />
+              <div class="body-edit-ops">
+                <el-button size="small" type="primary" :loading="bodySaving" @click="saveBodyEdit">保存描述</el-button>
+                <el-button size="small" @click="cancelBodyEdit">取消</el-button>
+              </div>
+            </template>
             <div class="sub-title">关联提交（{{ linkedLoading ? '加载中...' : linkedCommits.length }}）</div>
             <div v-if="linkedLoading" class="comment-body"><el-icon class="is-loading"><Loading /></el-icon> 正在加载关联提交...</div>
             <div v-else-if="linkedCommits.length === 0" class="comment-body">暂无直接关联提交（提交信息里引用 #{{ detail.number }} 的提交会显示在这里）</div>
@@ -294,6 +324,10 @@ const saving = ref(false)
 const state = ref('open')
 
 const detailVisible = ref(false)
+const detailFs = ref(false)
+const bodyEditing = ref(false)
+const bodyDraft = ref('')
+const bodySaving = ref(false)
 const detail = ref<GitHubIssue | null>(null)
 const comments = ref<IssueComment[]>([])
 const newComment = ref('')
@@ -414,6 +448,10 @@ async function loadLinkedCommits() {
 async function openDetail(row: GitHubIssue) {
   const c = ctx.value
   if (!c) return
+  if (detail.value?.number !== row.number) {
+    bodyEditing.value = false
+    bodyDraft.value = ''
+  }
   newComment.value = ''
   comments.value = []
   linkedCommits.value = []
@@ -646,6 +684,35 @@ async function submitEdit() {
   }
 }
 
+/** 详情弹窗内点击描述直接进入编辑 */
+function startBodyEdit() {
+  if (!detail.value) return
+  bodyDraft.value = detail.value.body || ''
+  bodyEditing.value = true
+}
+
+function cancelBodyEdit() {
+  bodyEditing.value = false
+  bodyDraft.value = ''
+}
+
+async function saveBodyEdit() {
+  const c = ctx.value
+  if (!c || !detail.value) return
+  bodySaving.value = true
+  const pat = await withPat()
+  const res = await updateIssue(pat, c.owner, c.repo, detail.value.number, { body: bodyDraft.value })
+  bodySaving.value = false
+  if (res.code === 200 && res.data) {
+    ElMessage.success('描述已更新')
+    await logStore.write({ module: 'issue', action: '编辑Issue描述', detail: `#${res.data.number} ${res.data.title}` })
+    applyIssue(res.data)
+    bodyEditing.value = false
+  } else {
+    ElMessage.error(`保存失败：${res.msg}`)
+  }
+}
+
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadIssues)
 onMounted(loadIssues)
 </script>
@@ -688,6 +755,11 @@ onMounted(loadIssues)
   overflow: auto;
   font-size: 13px;
 }
+.body-edit-ops {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 .comment-render {
   margin-top: 6px;
 }
@@ -702,6 +774,10 @@ onMounted(loadIssues)
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
+}
+.m-popup.m-popup-full {
+  max-height: 100%;
+  height: 100%;
 }
 .m-popup.m-popup-fill .van-cell-group {
   flex: 1;
@@ -816,6 +892,17 @@ onMounted(loadIssues)
 .commit-dialog.is-fullscreen .el-dialog__body {
   max-height: none;
   height: calc(100vh - 110px);
+}
+.detail-dialog .el-dialog__body {
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+}
+.detail-dialog.is-fullscreen .el-dialog__body {
+  max-height: none;
+  height: calc(100vh - 110px);
+}
+.detail-dialog.is-fullscreen .body-render {
+  max-height: none;
 }
 .form-dialog .el-dialog__body {
   max-height: calc(100vh - 150px);
