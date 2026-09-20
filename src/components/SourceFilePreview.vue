@@ -13,6 +13,7 @@
       <div class="sp-header">
         <span class="sp-title">源文件预览 {{ filename }}</span>
         <span class="sp-ops">
+          <el-button v-if="!loading && kind === 'text'" link type="primary" @click="copyContent">复制内容</el-button>
           <el-button link type="primary" @click="fullscreen = !fullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</el-button>
           <el-button link @click="close">关闭</el-button>
         </span>
@@ -31,6 +32,7 @@
     <div class="sp-m-popup">
       <div class="sp-m-title-row">
         <span class="sp-m-title">源文件预览 {{ filename }}</span>
+        <van-button v-if="!loading && kind === 'text'" size="mini" plain @click="copyContent">复制</van-button>
         <van-button size="mini" plain @click="fullscreen = !fullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</van-button>
       </div>
       <div v-if="loading" class="sp-loading-m"><van-loading /></div>
@@ -139,6 +141,21 @@ watch(
 
 function close() {
   dialogVisible.value = false
+}
+
+function copyContent() {
+  if (!content.value) {
+    ElMessage.warning('内容为空，无法复制')
+    return
+  }
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(content.value).then(
+      () => ElMessage.success('已复制文件内容'),
+      () => ElMessage.warning('复制失败，请手动复制')
+    )
+  } else {
+    ElMessage.warning('复制失败，请手动复制')
+  }
 }
 </script>
 
