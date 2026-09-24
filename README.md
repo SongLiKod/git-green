@@ -33,7 +33,7 @@
 | `/commits` | 提交历史 | 提交列表、改动文件 diff、检索 |
 | `/action` | Action 流水线 | workflows、运行记录（含分支列）、手动触发（解析 workflow inputs）、取消/重跑/日志下载、仓库 Variables/Secrets 管理（RSA 公钥加密写入）、产物与 Check 状态 |
 | `/release` | Release 管理 | 列表/新建/编辑/删除，带进度与断点续传的资产下载 |
-| `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、图片与源文件预览 |
+| `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、图片预览、`.md` 源码/渲染双视图 |
 | `/issue` | Issue 管理 | 列表（状态筛选、标签多选、最新关联提交列）、详情/评论、**Markdown 编辑器与渲染**、**仓库标签下拉管理（含 × 删除标签）** |
 | `/pull` | Pull Request | 列表（跨 Fork 时显示 `owner:branch`）、详情/评论（Markdown）、文件 diff、审核（RECOMMEND 自动寻找有写权限账号代审）、合并、关闭、**新建时可选「来源仓库」跨 fork 提 PR（深链 `/pull?headOwner=&headRepo=`）** |
 | `/log` | 操作日志 | 本地留痕、模块/级别过滤、导出、按保留天数自动清理 |
@@ -84,7 +84,7 @@
 - `MdEditor.vue`：Markdown 编辑器（工具栏插入语法、编辑/预览、自动增高、`fill` 全屏撑满模式）
 - `MdRender.vue`：Markdown 渲染器（链接新窗口、代码块/表格/任务列表样式，禁用 HTML）
 - `LabelSelect.vue`：标签多选 `el-select`（可选已有标签、回车新建、每项 `×`，`@remove` 回调用例自行处理删除）
-- `FileDiffList.vue` / `SourceFilePreview.vue`：提交/PR 文件 diff 与源文件预览
+- `FileDiffList.vue` / `SourceFilePreview.vue`：提交/PR 文件 diff 与源文件预览（`.md` 支持「渲染 / 源码」双视图，渲染复用 `MdRender`）
 - `AppLock.vue` / `QrDialog.vue` / `ThemeSwitch.vue` / `ForkDialog.vue`：应用锁解锁 UI、二维码、主题切换、**Fork 弹窗（目标账号/改名/组织/仅默认分支）**
 
 ### API 层（`src/api`）
