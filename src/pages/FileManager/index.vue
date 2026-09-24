@@ -32,6 +32,13 @@
           <div class="m-popup">
             <div class="m-popup-title-row">
               <span class="m-popup-title">{{ previewPath }}</span>
+              <van-button
+                v-if="showMdToggle"
+                size="mini"
+                :type="mdView === 'render' ? 'primary' : 'default'"
+                plain
+                @click="mdView = mdView === 'render' ? 'source' : 'render'"
+              >{{ mdView === 'render' ? '源码' : '渲染' }}</van-button>
               <van-button v-if="!editing && previewKind !== 'image'" size="mini" plain @click="copyPreviewContent">复制</van-button>
               <van-button size="mini" plain @click="fsVisible = !fsVisible">{{ fsVisible ? '退出全屏' : '全屏' }}</van-button>
             </div>
@@ -44,6 +51,9 @@
             </template>
             <template v-else-if="previewKind === 'image'">
               <div class="img-view-m"><img :src="previewImage" alt="preview" /></div>
+            </template>
+            <template v-else-if="showMdRender">
+              <div class="md-view-m"><MdRender :source="previewContent" empty-text="（文件为空）" /></div>
             </template>
             <template v-else>
               <pre class="m-code">{{ previewContent }}</pre>
@@ -125,6 +135,20 @@
         <div class="preview-header">
           <span class="preview-title">{{ previewPath }}{{ editing ? '（编辑中）' : previewKind === 'image' ? '（图片预览）' : '（在线预览）' }}</span>
           <span class="preview-ops">
+            <span v-if="showMdToggle" class="md-mode">
+              <el-button
+                link
+                :type="mdView === 'render' ? 'primary' : 'default'"
+                :class="{ active: mdView === 'render' }"
+                @click="mdView = 'render'"
+              >渲染</el-button>
+              <el-button
+                link
+                :type="mdView === 'source' ? 'primary' : 'default'"
+                :class="{ active: mdView === 'source' }"
+                @click="mdView = 'source'"
+              >源码</el-button>
+            </span>
             <el-button v-if="!editing && previewKind !== 'image'" link type="primary" @click="copyPreviewContent">复制内容</el-button>
             <el-button link type="primary" @click="fsVisible = !fsVisible">{{ fsVisible ? '退出全屏' : '全屏' }}</el-button>
             <el-button link @click="previewVisible = false">关闭</el-button>
@@ -134,6 +158,9 @@
       <el-input v-if="editing" v-model="editContent" type="textarea" :rows="22" class="code-editor" spellcheck="false" />
       <div v-else-if="previewKind === 'image'" class="img-view">
         <img :src="previewImage" alt="preview" />
+      </div>
+      <div v-else-if="showMdRender" class="md-view">
+        <MdRender :source="previewContent" empty-text="（文件为空）" />
       </div>
       <pre v-else class="code-view">{{ previewContent }}</pre>
       <el-input v-if="editing" v-model="commitMessage" placeholder="提交信息（commit message）" style="margin-top: 10px" />
@@ -165,6 +192,7 @@ import { getFileTree, getFileContent, getFileRaw, getFileBlob, saveFile, deleteF
 import type { FileEntry } from '@/api/githubFile'
 import { getBranches } from '@/api/githubBranch'
 import { useIsMobile } from '@/utils/platform'
+import MdRender from '@/components/MdRender.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -223,6 +251,13 @@ const previewSha = ref('')
 const previewKind = ref<'text' | 'image'>('text')
 const previewImage = ref('')
 const fsVisible = ref(false)
+/** Markdown 视图：渲染（默认）/ 源码 */
+const mdView = ref<'render' | 'source'>('render')
+const isMdFile = computed(() => previewKind.value === 'text' && isMarkdownFile(previewPath.value))
+/** 展示「渲染 / 源码」切换（仅 Markdown 文本且非编辑态） */
+const showMdToggle = computed(() => isMdFile.value && !editing.value)
+/** 以渲染视图展示 */
+const showMdRender = computed(() => showMdToggle.value && mdView.value === 'render')
 let previewObjectUrl = ''
 const editing = ref(false)
 const editContent = ref('')
@@ -239,6 +274,12 @@ const IMAGE_MIMES: Record<string, string> = {
   bmp: 'image/bmp',
   ico: 'image/x-icon',
   avif: 'image/avif'
+}
+
+/** 是否 Markdown 文件（支持「源码 / 渲染」双视图） */
+function isMarkdownFile(name: string): boolean {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  return ext === 'md' || ext === 'markdown' || ext === 'mdown' || ext === 'mkd'
 }
 
 function imageMime(name: string): string | null {
@@ -449,6 +490,7 @@ function releaseObjectUrl() {
 }
 
 watch(previewVisible, v => {
+  if (v) mdView.value = 'render'
   if (!v) releaseObjectUrl()
 })
 
@@ -638,6 +680,33 @@ onMounted(initRepo)
   white-space: pre-wrap;
   word-break: break-all;
 }
+.md-view {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px 16px;
+  height: 56vh;
+  overflow: auto;
+}
+.md-view-m {
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 12px 14px;
+  max-height: 62vh;
+  overflow: auto;
+}
+.md-mode {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0 4px;
+  margin-right: 6px;
+}
+.md-mode .el-button.active {
+  font-weight: 700;
+}
 :deep(.code-editor textarea) {
   font-family: Consolas, monospace;
   font-size: 13px;
@@ -648,6 +717,7 @@ onMounted(initRepo)
 <style>
 .el-dialog.is-fullscreen .code-view,
 .el-dialog.is-fullscreen .img-view,
+.el-dialog.is-fullscreen .md-view,
 .el-dialog.is-fullscreen .code-editor textarea {
   height: calc(100vh - 150px);
 }
