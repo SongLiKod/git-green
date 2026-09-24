@@ -7,8 +7,9 @@ export interface GitHubPR {
   draft: boolean
   body: string | null
   user: { login: string } | null
-  head: { ref: string; sha: string }
-  base: { ref: string }
+  /** 跨 fork 提交时 label 形如 `forkOwner:branch`，repo 为来源仓库 */
+  head: { ref: string; sha: string; label?: string; repo?: { full_name?: string } }
+  base: { ref: string; label?: string; repo?: { full_name?: string } }
   mergeable?: boolean | null
   created_at: string
   updated_at: string
@@ -27,6 +28,7 @@ export interface PRFile {
 export interface CreatePRPayload {
   title: string
   body?: string
+  /** 同仓库时为分支名；跨 fork 时为 `forkOwner:branch` */
   head: string
   base: string
   draft?: boolean

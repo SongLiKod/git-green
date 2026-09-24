@@ -20,6 +20,65 @@
         </div>
         <div class="form-tip" style="margin-top: 8px">SSH 使用账号自定义主机（账号管理里可修改）；配置了自定义主机时才额外展示 默认SSH 地址</div>
       </el-card>
+
+      <!-- Fork 与上游 -->
+      <el-card shadow="never" class="mb14">
+        <template #header>
+          <div class="card-header">
+            <span>Fork 与上游</span>
+            <div>
+              <el-button @click="forkVisible = true" :disabled="!repo">Fork 到我的账号</el-button>
+              <el-button @click="router.push('/forks')" :disabled="!repo">查看 Fork 列表</el-button>
+            </div>
+          </div>
+        </template>
+        <template v-if="repoDetail">
+          <div v-if="repoDetail.fork && repoDetail.parent" class="fork-line">
+            <el-tag size="small" type="primary">Fork</el-tag>
+            <span>派生自</span>
+            <span class="fork-link" @click="openRepo(repoDetail.parent!.full_name)">{{ repoDetail.parent.full_name }}</span>
+            <template v-if="repoDetail.source && repoDetail.source.full_name !== repoDetail.parent.full_name">
+              <span style="margin-left: 12px">网络源</span>
+              <span class="fork-link" @click="openRepo(repoDetail.source!.full_name)">{{ repoDetail.source.full_name }}</span>
+            </template>
+          </div>
+          <div v-else class="fork-line">
+            <el-tag size="small" type="info">源仓库</el-tag>
+            <span>本仓库不是 Fork；当前 Fork 数 {{ repoDetail.forks_count }}</span>
+          </div>
+
+          <template v-if="repoDetail.fork && repoDetail.parent">
+            <div class="fork-line">
+              <span>与上游状态：</span>
+              <el-tag v-if="syncState" size="small" :type="syncState.behind_by > 0 ? 'warning' : 'success'">
+                {{ syncState.behind_by > 0 ? `落后上游 ${syncState.behind_by} 个提交` : '已与上游同步' }}
+              </el-tag>
+              <el-tag v-else size="small" type="info">{{ syncChecking ? '检查中…' : '未检查' }}</el-tag>
+              <el-tag v-if="syncState && syncState.ahead_by > 0" size="small" type="primary">
+                领先上游 {{ syncState.ahead_by }} 个提交
+              </el-tag>
+              <el-button size="small" style="margin-left: 10px" :loading="syncChecking" @click="checkSyncState">重新检查</el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="syncing"
+                :disabled="!syncState || syncState.behind_by === 0"
+                @click="doSyncUpstream"
+              >
+                同步上游
+              </el-button>
+              <el-button size="small" @click="compareWithUpstream">与上游比较</el-button>
+              <el-button size="small" @click="prToUpstream">向上游提 PR</el-button>
+            </div>
+            <div class="form-tip">
+              同步上游使用 GitHub 官方 <code>merge-upstream</code> 接口；若提示冲突，可改用「向上游提 PR」在软件内处理。
+            </div>
+          </template>
+        </template>
+        <div v-else class="form-tip">正在读取仓库派生信息…</div>
+      </el-card>
+
+      <ForkDialog v-model="forkVisible" :repo="repo" />
       <el-row :gutter="14">
         <el-col :span="12">
           <el-card shadow="never" class="mb14">
@@ -137,23 +196,148 @@
 <script setup lang="ts">
 defineOptions({ name: 'RepoSetting' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useLogStore } from '@/stores/useLogStore'
 import * as repoApi from '@/api/githubRepo'
-import type { Collaborator } from '@/api/githubRepo'
-import { getBranches, getBranchProtection, saveBranchProtection, deleteBranchProtection } from '@/api/githubBranch'
+import type { Collaborator, GitHubRepo } from '@/api/githubRepo'
+import { getBranches, getBranchProtection, saveBranchProtection, deleteBranchProtection, getBranchDiffAcross } from '@/api/githubBranch'
+import { syncUpstream } from '@/api/githubFork'
 import type { GitHubBranch } from '@/api/githubBranch'
+import ForkDialog from '@/components/ForkDialog.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
 const logStore = useLogStore()
+const router = useRouter()
 
 const repo = computed(() => repoStore.currentRepo)
 const saving = ref(false)
 const branches = ref<GitHubBranch[]>([])
 const collaborators = ref<Collaborator[]>([])
+
+/* ---------- Fork 与上游 ---------- */
+const repoDetail = ref<GitHubRepo | null>(null)
+const syncState = ref<{ behind_by: number; ahead_by: number } | null>(null)
+const syncChecking = ref(false)
+const syncing = ref(false)
+const forkVisible = ref(false)
+
+/** 读取仓库完整信息（含 parent/source 派生关系）并检查与上游差异 */
+async function loadForkInfo() {
+  repoDetail.value = null
+  syncState.value = null
+  const r = repo.value
+  if (!r) return
+  const pat = await withPat()
+  if (!pat) return
+  const res = await repoApi.getRepoSetting(pat, r.owner.login, r.name)
+  if (res.code !== 200 || !res.data) return
+  repoDetail.value = res.data
+  if (res.data.fork && res.data.parent) checkSyncState()
+}
+
+/** compare 跨网络语义：base=上游，head=本仓库 → behind_by 即本仓库落后上游的提交数 */
+async function checkSyncState() {
+  const d = repoDetail.value
+  if (!d?.parent) return
+  syncChecking.value = true
+  const pat = await withPat()
+  const base = `${d.parent.owner.login}:${d.parent.default_branch}`
+  const head = `${d.owner.login}:${d.default_branch}`
+  const res = await getBranchDiffAcross(pat, d.parent.owner.login, d.parent.name, base, head)
+  syncChecking.value = false
+  if (res.code === 200 && res.data) {
+    syncState.value = { behind_by: res.data.behind_by, ahead_by: res.data.ahead_by }
+  } else {
+    syncState.value = null
+  }
+}
+
+/** 同步上游：官方 merge-upstream；200=成功 / 409=冲突 / 422=其他 */
+async function doSyncUpstream() {
+  const d = repoDetail.value
+  if (!d?.parent) return
+  const branch = d.default_branch
+  try {
+    await ElMessageBox.confirm(
+      `确认把「${d.full_name}」的 ${branch} 分支与上游 ${d.parent.full_name} 同步？将在本仓库产生合并/快进提交。`,
+      '同步上游',
+      { type: 'warning', confirmButtonText: '确认同步', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  syncing.value = true
+  const pat = await withPat()
+  const res = await syncUpstream(pat, d.owner.login, d.name, branch)
+  syncing.value = false
+  if (res.code === 200) {
+    ElMessage.success(`同步完成（${res.data?.merge_type || 'merged'}）`)
+    await logStore.write({ module: 'repo', action: '同步上游', detail: `${d.full_name} ← ${d.parent.full_name}（${branch}）`, level: 'warning' })
+    checkSyncState()
+    repoStore.refreshCurrent()
+  } else if (res.code === 404) {
+    ElMessageBox.alert(
+      `同步接口不可用（${res.msg}）。可改用「向上游提 PR」把上游变更合入本 fork，或使用 Windows 客户端本地 Git 同步。`,
+      '同步上游',
+      { type: 'warning', confirmButtonText: '知道了' }
+    )
+  } else if (res.code === 409) {
+    ElMessageBox.alert(
+      `同步失败：${branch} 与上游存在合并冲突。\n可点击「向上游提 PR」在软件内处理冲突，或使用 Windows 客户端本地 Git 解决。`,
+      '同步冲突',
+      { type: 'warning', confirmButtonText: '知道了' }
+    )
+  } else {
+    ElMessage.error(`同步失败：${res.msg}`)
+  }
+}
+
+/** 打开（选中/接入）某个仓库 */
+async function openRepo(fullName: string) {
+  const [owner, name] = fullName.split('/')
+  const accId = repoStore.findAccountIdByRepo(fullName)
+  if (accId) {
+    repoStore.selectRepo(fullName)
+    return
+  }
+  await repoStore.openExternalRepo(owner, name)
+}
+
+/** 与上游比较：跳分支管理页并带上跨仓库 base/head 参数 */
+async function compareWithUpstream() {
+  const d = repoDetail.value
+  if (!d?.parent) return
+  await router.push({
+    path: '/branch',
+    query: {
+      base: `${d.parent.owner.login}:${d.parent.default_branch}`,
+      head: `${d.owner.login}:${d.default_branch}`,
+      repoOwner: d.parent.owner.login,
+      repoName: d.parent.name
+    }
+  })
+}
+
+/** 向上游提 PR：把上游切为当前仓库（必要时接入外部），再打开新建 PR 弹窗，head 预设为本 fork */
+async function prToUpstream() {
+  const d = repoDetail.value
+  if (!d?.parent) return
+  const myFull = d.full_name
+  const upFull = d.parent.full_name
+  const accId = repoStore.findAccountIdByRepo(upFull)
+  if (accId) repoStore.selectRepo(upFull)
+  else {
+    const ok = await repoStore.openExternalRepo(d.parent.owner.login, d.parent.name)
+    if (!ok) return
+  }
+  const [myOwner, myName] = myFull.split('/')
+  await router.push({ path: '/pull', query: { headOwner: myOwner, headRepo: myName } })
+}
+
 
 const currentSshHost = computed(
   () => accountStore.accounts.find(a => a.id === repoStore.currentAccountId)?.sshHost?.trim() || 'github.com'
@@ -223,6 +407,7 @@ async function loadAll() {
   const r = repo.value
   if (!r) return
   fillForm()
+  loadForkInfo()
   const pat = await withPat()
   if (!pat) return
   const b = await getBranches(pat, r.owner.login, r.name)
@@ -444,5 +629,27 @@ onMounted(loadAll)
   flex: none;
   color: var(--text-secondary);
   font-size: 13px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.fork-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.fork-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  font-weight: 600;
+}
+.fork-link:hover {
+  text-decoration: underline;
 }
 </style>
