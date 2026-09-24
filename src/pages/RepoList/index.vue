@@ -27,6 +27,7 @@
           </div>
           <div class="m-tags" style="margin-top: 0">
             <van-tag :type="r.private ? 'warning' : 'success'">{{ r.private ? '私有' : '公开' }}</van-tag>
+            <van-tag v-if="r.fork" type="primary">Fork</van-tag>
             <van-tag v-if="repoStore.isAdHocRepo(r.full_name)" type="default">外部</van-tag>
           </div>
         </div>
@@ -44,6 +45,7 @@
             {{ repoStore.getMeta(r.full_name).pin ? '取消置顶' : '置顶' }}
           </van-button>
           <van-button size="mini" type="primary" plain @click="enterRepo(r)">进入</van-button>
+          <van-button size="mini" plain @click="onForkRepo(r)">Fork</van-button>
           <van-button size="mini" plain @click="openClone(r)">克隆</van-button>
           <van-button v-if="repoStore.isAdHocRepo(r.full_name)" size="mini" type="warning" plain @click="onRemoveAdHoc(r)">移除</van-button>
           <van-button v-else size="mini" type="danger" plain @click="onDeleteRepo(r)">删除</van-button>
@@ -169,10 +171,14 @@
                   <el-icon v-if="repoStore.getMeta(row.full_name).pin" color="var(--color-primary)">★</el-icon>
                   <span class="link-text" @click="selectRepo(row)">{{ row.full_name }}</span>
                   <el-tag size="small" :type="row.private ? 'warning' : 'success'">{{ row.private ? '私有' : '公开' }}</el-tag>
+                  <el-tag v-if="row.fork" size="small" type="primary">Fork</el-tag>
                   <el-tag v-if="row.archived" size="small" type="info">已归档</el-tag>
                   <el-tag v-if="repoStore.isAdHocRepo(row.full_name)" size="small" type="info" effect="plain">外部</el-tag>
                 </div>
-                <div class="repo-desc">{{ row.description || '暂无简介' }}</div>
+                <div class="repo-desc">
+                  {{ row.description || '暂无简介' }}
+                  <span v-if="row.fork && row.source" class="fork-source">· 源自 {{ row.source.full_name }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column prop="language" label="语言" width="100" />
@@ -180,7 +186,9 @@
               <template #default="{ row }">{{ row.stargazers_count }}</template>
             </el-table-column>
             <el-table-column label="Forks" width="80">
-              <template #default="{ row }">{{ row.forks_count }}</template>
+              <template #default="{ row }">
+                <span class="forks-link" @click="openForks(row)">{{ row.forks_count }}</span>
+              </template>
             </el-table-column>
             <el-table-column label="分组" width="110">
               <template #default="{ row }">
@@ -197,7 +205,7 @@
             <el-table-column label="更新时间" width="160">
               <template #default="{ row }">{{ new Date(row.updated_at).toLocaleString() }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="300" fixed="right">
+            <el-table-column label="操作" width="340" fixed="right">
               <template #default="{ row }">
                 <el-button link :type="repoStore.getMeta(row.full_name).favorite ? 'warning' : ''" @click="repoStore.toggleFavorite(row.full_name)">
                   {{ repoStore.getMeta(row.full_name).favorite ? '取消收藏' : '收藏' }}
@@ -206,6 +214,7 @@
                   {{ repoStore.getMeta(row.full_name).pin ? '取消置顶' : '置顶' }}
                 </el-button>
                 <el-button link type="primary" @click="openClone(row)">克隆</el-button>
+                <el-button link @click="onForkRepo(row)">Fork</el-button>
                 <el-button link @click="selectRepo(row)">进入</el-button>
                 <el-button v-if="repoStore.isAdHocRepo(row.full_name)" link type="warning" @click="onRemoveAdHoc(row)">移除</el-button>
                 <el-button v-else link type="danger" @click="onDeleteRepo(row)">删除</el-button>
@@ -291,6 +300,7 @@
     </el-dialog>
 
     <QrDialog v-model="qrVisible" :text="qrText" :title="qrTitle" />
+    <ForkDialog v-model="forkVisible" :repo="forkRepo" />
     </template>
   </div>
 </template>
@@ -307,6 +317,7 @@ import type { GitHubRepo } from '@/api/githubRepo'
 import { getBranches } from '@/api/githubBranch'
 import { isWindowsClient, useIsMobile } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
+import ForkDialog from '@/components/ForkDialog.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -463,6 +474,7 @@ const sheetVisible = ref(false)
 const sheetRepo = ref<GitHubRepo | null>(null)
 const sheetBase = [
   { name: '仓库设置', path: '/repo-setting' },
+  { name: 'Fork管理', path: '/forks' },
   { name: '分支管理', path: '/branch' },
   { name: 'Action流水线', path: '/action' },
   { name: 'Release管理', path: '/release' },
@@ -487,6 +499,23 @@ function onSheetSelect(action: { path: string }) {
 function enterRepo(r: GitHubRepo) {
   repoStore.selectRepo(r.full_name)
   router.push('/repo-setting')
+}
+
+/* ---------- Fork ---------- */
+const forkVisible = ref(false)
+const forkRepo = ref<GitHubRepo | null>(null)
+
+/** 打开 Fork 弹窗（把该仓库设为当前仓库上下文，供 ForkDialog 读取） */
+function onForkRepo(r: GitHubRepo) {
+  repoStore.selectRepo(r.full_name)
+  forkRepo.value = r
+  forkVisible.value = true
+}
+
+/** 点击 Forks 计数进入 Fork 管理页（先把该仓库设为当前仓库） */
+function openForks(r: GitHubRepo) {
+  repoStore.selectRepo(r.full_name)
+  router.push('/forks')
 }
 
 async function submitCreate() {
@@ -648,6 +677,18 @@ onMounted(async () => {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 4px;
+}
+.fork-source {
+  color: var(--color-primary);
+  margin-left: 4px;
+}
+.forks-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  font-weight: 600;
+}
+.forks-link:hover {
+  text-decoration: underline;
 }
 .git-card {
   margin-top: 14px;

@@ -8,6 +8,7 @@ const router = createRouter({
     { path: '/account', name: 'AccountManage', component: () => import('@/pages/AccountManage/index.vue'), meta: { title: '账号管理' } },
     { path: '/repo', name: 'RepoList', component: () => import('@/pages/RepoList/index.vue'), meta: { title: '仓库列表' } },
     { path: '/repo-setting', name: 'RepoSetting', component: () => import('@/pages/RepoSetting/index.vue'), meta: { title: '仓库设置' } },
+    { path: '/forks', name: 'ForkManage', component: () => import('@/pages/ForkManage/index.vue'), meta: { title: 'Fork管理' } },
     { path: '/branch', name: 'BranchManage', component: () => import('@/pages/BranchManage/index.vue'), meta: { title: '分支管理' } },
     { path: '/commits', name: 'CommitHistory', component: () => import('@/pages/CommitHistory/index.vue'), meta: { title: '提交历史' } },
     { path: '/action', name: 'ActionManage', component: () => import('@/pages/ActionManage/index.vue'), meta: { title: 'Action流水线' } },

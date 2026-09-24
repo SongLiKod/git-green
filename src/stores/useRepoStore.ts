@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as repoApi from '@/api/githubRepo'
 import type { GitHubRepo } from '@/api/githubRepo'
+import * as forkApi from '@/api/githubFork'
 import { useAccountStore } from './useAccountStore'
 import { useLogStore } from './useLogStore'
 
@@ -284,6 +285,95 @@ export const useRepoStore = defineStore('repo', () => {
     return false
   }
 
+  /** 等待新仓库在 GitHub 侧就绪（fork 为异步操作，最多等 60s） */
+  async function waitRepoReady(
+    accountId: string,
+    owner: string,
+    name: string,
+    timeoutMs = 60000
+  ): Promise<boolean> {
+    const pat = await accountStore.getPat(accountId)
+    if (!pat) return false
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const res = await repoApi.getRepoSetting(pat, owner, name)
+      if (res.code === 200) return true
+      if (Date.now() >= deadline) return false
+      await new Promise(r => setTimeout(r, 3000))
+    }
+  }
+
+  /**
+   * Fork 仓库到指定账号（可改名 / Fork 到组织 / 仅默认分支）。
+   * GitHub 的 Fork 是异步操作：创建提交后轮询目标仓库就绪，成功自动切到目标账号并选中新仓库。
+   * 返回新仓库 full_name，失败返回空串。
+   */
+  async function forkRepo(payload: {
+    sourceOwner: string
+    sourceRepo: string
+    accountId: string
+    name?: string
+    organization?: string
+    defaultBranchOnly?: boolean
+  }): Promise<string> {
+    const targetAcc = accountStore.accounts.find(a => a.id === payload.accountId)
+    if (!targetAcc) {
+      ElMessage.warning('请选择目标账号')
+      return ''
+    }
+    const pat = await accountStore.getPat(payload.accountId)
+    if (!pat) return ''
+    const repoName = (payload.name || '').trim() || payload.sourceRepo
+    const res = await forkApi.createFork(pat, payload.sourceOwner, payload.sourceRepo, {
+      name: payload.name?.trim() || undefined,
+      organization: payload.organization?.trim() || undefined,
+      default_branch_only: payload.defaultBranchOnly || undefined
+    })
+    if (res.code !== 200) {
+      const hint =
+        res.code === 404
+          ? '源仓库不存在或目标账号无读取权限'
+          : res.code === 403
+            ? '目标账号权限不足或源仓库禁止 Fork'
+            : res.code === 422
+              ? `参数不合法或已存在同名 Fork（${res.msg}）`
+              : res.msg
+      ElMessage.error(`Fork 失败：${hint}`)
+      await logStore.write({
+        module: 'repo',
+        action: 'Fork仓库失败',
+        detail: `${payload.sourceOwner}/${payload.sourceRepo} → @${targetAcc.username}：${hint}`,
+        level: 'error'
+      })
+      return ''
+    }
+    const owner = payload.organization?.trim() || targetAcc.username
+    const fullName = `${owner}/${repoName}`
+    ElMessage.info('Fork 已提交，GitHub 正在异步创建，等待仓库就绪…')
+    const ready = await waitRepoReady(payload.accountId, owner, repoName)
+    if (!ready) {
+      ElMessage.warning('Fork 创建已提交，但仓库尚未就绪，请稍后点击「刷新仓库」查看')
+      await logStore.write({
+        module: 'repo',
+        action: 'Fork仓库',
+        detail: `${payload.sourceOwner}/${payload.sourceRepo} → ${fullName}（已提交，尚未就绪）`,
+        level: 'warning'
+      })
+      return ''
+    }
+    await loadRepos(payload.accountId, true)
+    if (payload.accountId !== currentAccountId.value) setCurrentAccount(payload.accountId)
+    setCurrentRepo(fullName)
+    ElMessage.success(`Fork 成功：${fullName}`)
+    await logStore.write({
+      module: 'repo',
+      action: 'Fork仓库',
+      detail: `${payload.sourceOwner}/${payload.sourceRepo} → ${fullName}（@${targetAcc.username}）`,
+      level: 'success'
+    })
+    return fullName
+  }
+
   return {
     reposByAccount,
     adHocRepos,
@@ -311,6 +401,7 @@ export const useRepoStore = defineStore('repo', () => {
     currentOwnerName,
     search,
     createRepo,
+    forkRepo,
     deleteRepo,
     reloadMeta
   }

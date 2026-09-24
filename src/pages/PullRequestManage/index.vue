@@ -16,7 +16,7 @@
           <div class="m-card-head">
             <div class="m-card-title">
               <div class="t">#{{ p.number }} {{ p.title }}</div>
-              <div class="m-sub">{{ p.head.ref }} → {{ p.base.ref }} · {{ p.user?.login }}</div>
+              <div class="m-sub">{{ prHeadText(p) }} → {{ p.base.ref }} · {{ p.user?.login }}</div>
             </div>
             <van-tag v-if="p.draft" type="default">草稿</van-tag>
             <van-tag v-else-if="p.merged_at" type="primary">已合并</van-tag>
@@ -27,7 +27,7 @@
         <van-popup v-model:show="detailVisible" position="bottom" round :style="{ height: '86%' }">
           <div class="m-popup" v-if="detail">
             <div class="m-popup-title">#{{ detail.number }} {{ detail.title }}</div>
-            <div class="m-sub">{{ detail.head.ref }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
+            <div class="m-sub">{{ prHeadText(detail) }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
             <div class="m-md-body"><MdRender :source="detail.body" empty-text="（无描述）" /></div>
             <div class="m-section-title" style="margin-left: 0">变更文件（{{ files.length }}）</div>
             <FileDiffList :files="files" @preview="openFilePreview" />
@@ -57,6 +57,7 @@
             </div>
             <van-cell-group inset>
               <van-field v-model="createForm.title" label="标题" required />
+              <van-field v-model="createForm.headRepo" label="来源仓库" placeholder="留空=本仓库，或填 owner/repo" />
               <van-cell title="描述" />
               <div class="m-md-cell"><MdEditor v-model="createForm.body" placeholder="支持 Markdown 语法" min-height="160px" :fill="createFs" /></div>
               <van-field :model-value="createForm.base" label="base" placeholder="目标分支" readonly is-link @click="openPicker('base')" />
@@ -97,7 +98,7 @@
           <el-table-column label="Pull Request" min-width="280">
             <template #default="{ row }">
               <div class="pr-title">#{{ row.number }} {{ row.title }}</div>
-              <div class="pr-meta">{{ row.head.ref }} → {{ row.base.ref }} · {{ row.user?.login }} · {{ new Date(row.updated_at).toLocaleString() }}</div>
+              <div class="pr-meta">{{ prHeadText(row) }} → {{ row.base.ref }} · {{ row.user?.login }} · {{ new Date(row.updated_at).toLocaleString() }}</div>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="100">
@@ -116,7 +117,7 @@
 
         <el-dialog v-model="detailVisible" :title="detail ? `#${detail.number} ${detail.title}` : ''" width="720px" top="5vh">
           <template v-if="detail">
-            <div class="pr-meta">{{ detail.head.ref }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
+            <div class="pr-meta">{{ prHeadText(detail) }} → {{ detail.base.ref }} · {{ detail.user?.login }}</div>
             <MdRender :source="detail.body" empty-text="（无描述）" class="body-render" />
             <div class="sub-title">变更文件（{{ files.length }}）</div>
             <FileDiffList :files="files" @preview="openFilePreview" />
@@ -160,11 +161,23 @@
               <el-select v-model="createForm.base" filterable style="width: 100%">
                 <el-option v-for="b in branchNames" :key="b" :label="b" :value="b" />
               </el-select>
-            </el-form-item>
-            <el-form-item label="head分支">
-              <el-select v-model="createForm.head" filterable style="width: 100%">
-                <el-option v-for="b in branchNames" :key="b" :label="b" :value="b" />
-              </el-select>
+            </el-form-item>            <el-form-item label="head分支">
+              <div class="head-row">
+                <el-select
+                  v-model="createForm.headRepo"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  placeholder="来源仓库（留空=本仓库）"
+                  style="width: 260px"
+                >
+                  <el-option v-for="s in headSources" :key="s" :label="s" :value="s" />
+                </el-select>
+                <el-select v-model="createForm.head" filterable style="flex: 1">
+                  <el-option v-for="b in createHeadBranchNames" :key="b" :label="b" :value="b" />
+                </el-select>
+              </div>
             </el-form-item>
             <el-form-item label="草稿"><el-switch v-model="createForm.draft" /></el-form-item>
           </el-form>
@@ -196,6 +209,7 @@ import type { ApiResult } from '@/api/request'
 import { listComments, commentIssue } from '@/api/githubIssue'
 import type { IssueComment } from '@/api/githubIssue'
 import { getBranches } from '@/api/githubBranch'
+import { listForks } from '@/api/githubFork'
 import { getCollaborators } from '@/api/githubRepo'
 import { useIsMobile } from '@/utils/platform'
 import FileDiffList, { type DiffFile } from '@/components/FileDiffList.vue'
@@ -215,6 +229,10 @@ const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
 const prs = ref<GitHubPR[]>([])
 const branchNames = ref<string[]>([])
+/** head 来源仓库可选项：本仓库 + 同网络 fork（懒加载） */
+const headSources = ref<string[]>([])
+/** head 来源仓库与本仓库不一致时，为来源仓库的分支列表 */
+const headSourceBranches = ref<string[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const state = ref('open')
@@ -228,12 +246,23 @@ const mergeMethod = ref<'merge' | 'squash' | 'rebase'>('merge')
 
 const createVisible = ref(false)
 const createFs = ref(false)
-const createForm = reactive({ title: '', body: '', base: '', head: '', draft: false })
+const createForm = reactive({ title: '', body: '', base: '', head: '', headRepo: '', draft: false })
+
+/** head 分支候选：来源仓库为本仓库时用本仓库分支，否则用来源仓库分支 */
+const createHeadBranchNames = computed(() =>
+  isCrossHead.value ? headSourceBranches.value : branchNames.value
+)
+
+/** head 来源仓库是否跨仓库（填写了且不等于当前仓库） */
+const isCrossHead = computed(() => {
+  const v = createForm.headRepo.trim()
+  return !!v && v !== repo.value?.full_name
+})
 
 const mergeVisible = ref(false)
 const pickerVisible = ref(false)
 const pickerTarget = ref<'base' | 'head'>('base')
-const branchColumns = computed(() => branchNames.value.map(b => ({ text: b, value: b })))
+const branchColumns = computed(() => createHeadBranchNames.value.map(b => ({ text: b, value: b })))
 const mergeMethods = [
   { text: 'Create a merge commit', value: 'merge' as const },
   { text: 'Squash and merge', value: 'squash' as const },
@@ -281,11 +310,46 @@ async function loadPRs() {
   else ElMessage.error(`PR加载失败：${res.msg}`)
 }
 
+/** 加载 head 来源仓库可选项（本仓库 + 同网络 fork 前 30 个） */
+async function loadHeadSources() {
+  headSources.value = repo.value ? [repo.value.full_name] : []
+  const r = repo.value
+  if (!r) return
+  const pat = await withPat()
+  const res = await listForks(pat, r.owner.login, r.name, 'newest', 1, 30)
+  if (res.code === 200) {
+    const list = (res.data || []).map(f => f.full_name)
+    headSources.value = [...new Set([...headSources.value, ...list])]
+  }
+}
+
+/** 来源仓库切换时拉取其分支 */
+async function loadHeadSourceBranches() {
+  const v = createForm.headRepo.trim()
+  if (!v || v === repo.value?.full_name) {
+    headSourceBranches.value = []
+    return
+  }
+  const parts = v.split('/')
+  if (parts.length !== 2) return
+  const pat = await withPat()
+  const res = await getBranches(pat, parts[0], parts[1])
+  headSourceBranches.value = res.code === 200 ? (res.data || []).map(b => b.name) : []
+}
+
+/** PR 展示用 head 文本：跨仓库时显示 owner:branch */
+function prHeadText(p: GitHubPR): string {
+  if (p.head.label && p.head.label !== p.head.ref) return p.head.label
+  if (p.head.repo?.full_name && p.head.repo.full_name !== p.base.ref) return `${p.head.repo.full_name}:${p.head.ref}`
+  return p.head.ref
+}
+
 async function loadBranches() {
   if (!ctx.value) return
   const pat = await withPat()
   const res = await getBranches(pat, ctx.value.owner, ctx.value.repo)
   if (res.code === 200) branchNames.value = (res.data || []).map(b => b.name)
+  loadHeadSources()
 }
 
 async function openDetail(row: GitHubPR) {
@@ -455,6 +519,8 @@ function openCreate() {
   createForm.body = ''
   createForm.base = repo.value?.default_branch || 'main'
   createForm.head = ''
+  createForm.headRepo = ''
+  headSourceBranches.value = []
   createForm.draft = false
   createVisible.value = true
 }
@@ -472,6 +538,16 @@ function onPickerConfirm(payload: { selectedValues: string[] }) {
   pickerVisible.value = false
 }
 
+/** head 值：跨仓库时为 `owner:branch`，同仓库为分支名 */
+function buildHeadSpec(): string {
+  const branch = createForm.head
+  if (!isCrossHead.value) return branch
+  const src = createForm.headRepo.trim()
+  const parts = src.split('/')
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return branch
+  return `${parts[0]}:${branch}`
+}
+
 async function submitCreate() {
   if (!ctx.value) return
   if (!createForm.title.trim()) {
@@ -482,29 +558,42 @@ async function submitCreate() {
     ElMessage.warning('请选择 head 与 base 分支')
     return
   }
-  if (createForm.head === createForm.base) {
+  if (isCrossHead.value) {
+    const parts = createForm.headRepo.trim().split('/')
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      ElMessage.warning('来源仓库格式应为 owner/repo')
+      return
+    }
+  } else if (createForm.head === createForm.base) {
     ElMessage.warning('head 与 base 分支不能相同')
     return
   }
+  const headSpec = buildHeadSpec()
   saving.value = true
   const pat = await withPat()
   const res = await createPR(pat, ctx.value.owner, ctx.value.repo, {
     title: createForm.title.trim(),
     body: createForm.body || undefined,
-    head: createForm.head,
+    head: headSpec,
     base: createForm.base,
     draft: createForm.draft
   })
   saving.value = false
   if (res.code === 201 || res.code === 200) {
     ElMessage.success(`PR #${res.data?.number} 已创建`)
-    await logStore.write({ module: 'pull', action: '创建PR', detail: `#${res.data?.number} ${createForm.title}（${createForm.head} → ${createForm.base}）`, level: 'success' })
+    await logStore.write({ module: 'pull', action: '创建PR', detail: `#${res.data?.number} ${createForm.title}（${headSpec} → ${createForm.base}）`, level: 'success' })
     createVisible.value = false
     loadPRs()
   } else {
     ElMessage.error(`创建失败：${res.msg}`)
   }
 }
+
+// 来源仓库切换时拉取其分支，并重置已选 head 分支
+watch(() => createForm.headRepo, () => {
+  createForm.head = ''
+  loadHeadSourceBranches()
+})
 
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], () => {
   loadPRs()
@@ -527,14 +616,34 @@ async function handlePrQuery() {
   if (n > 0) await openDetail({ number: n } as GitHubPR)
 }
 watch(() => route.query.pr, handlePrQuery)
+
+/* ---------- 深链：/pull?headOwner=&headRepo= 预设 head 来源仓库（「向上游提 PR」入口使用） ---------- */
+async function handleHeadQuery() {
+  const ho = String(route.query.headOwner || '')
+  const hr = String(route.query.headRepo || '')
+  if (!ho || !hr || !ctx.value) return
+  router.replace({ query: {} }).catch(() => {})
+  await nextTick()
+  openCreate()
+  createForm.headRepo = `${ho}/${hr}`
+  loadHeadSourceBranches()
+}
+watch(() => [route.query.headOwner, route.query.headRepo], handleHeadQuery)
+
 onMounted(() => {
   loadPRs()
   loadBranches()
   handlePrQuery()
+  handleHeadQuery()
 })
 </script>
 
 <style scoped>
+.head-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
 .pr-title {
   font-weight: 600;
 }

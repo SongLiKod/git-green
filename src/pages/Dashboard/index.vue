@@ -140,7 +140,8 @@ const stats = computed(() => {
     { label: '仓库总数', value: repos.length, color: 'var(--color-primary)', to: '/repo' },
     { label: '私有仓库', value: repos.filter(r => r.private).length, color: '#e6a23c', to: '/repo' },
     { label: '总 Stars', value: repos.reduce((s, r) => s + r.stargazers_count, 0), color: 'var(--text-main)', to: '/repo' },
-    { label: '总 Forks', value: repos.reduce((s, r) => s + r.forks_count, 0), color: 'var(--text-main)', to: '/repo' },
+    { label: '总 Forks', value: repos.reduce((s, r) => s + r.forks_count, 0), color: 'var(--text-main)', to: '/forks' },
+    { label: '我的 Fork', value: repos.filter(r => r.fork).length, color: 'var(--color-primary)', to: '/forks' },
     { label: '收藏仓库', value: Object.values(repoStore.metaMap).filter(m => m.favorite).length, color: '#e6a23c', to: '/repo' },
     { label: 'Action运行', value: '-', color: 'var(--text-main)', to: '/action' },
     { label: 'Release', value: '-', color: 'var(--text-main)', to: '/release' }

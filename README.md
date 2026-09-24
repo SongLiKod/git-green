@@ -24,19 +24,27 @@
 
 | 路由 | 页面 | 主要功能 |
 | --- | --- | --- |
-| `/dashboard` | 仪表盘 | 当前账号/仓库概览、数据统计、快捷入口 |
+| `/dashboard` | 仪表盘 | 当前账号/仓库概览、数据统计（含**我的 Fork 数**，可点进 `/forks`）、快捷入口 |
 | `/account` | 账号管理 | 多账号常驻：添加（PAT 校验→本地加密）、编辑备注/标签/分组/SSH主机、更新 PAT、状态检测（正常/过期/失效）、删除、**导入/导出加密配置备份**、SSH 公钥管理 |
-| `/repo` | 仓库列表 | 按账号树展开仓库、置顶/收藏/自定义分组、跨账号全局搜索、新建/删除远程仓库 |
-| `/repo-setting` | 仓库设置 | 基本信息、可见性、功能开关、协作者管理 |
-| `/branch` | 分支管理 | 分支增删改、分支差异对比（文件级 diff + 提交记录）、分支保护规则 |
+| `/repo` | 仓库列表 | 按账号树展开仓库、置顶/收藏/自定义分组、跨账号全局搜索、新建/删除远程仓库、**Fork 按钮（选目标账号/改名/组织/仅默认分支）**、Fork 标签与「源自 xxx」、Forks 计数可点进入 Fork 管理 |
+| `/repo-setting` | 仓库设置 | 基本信息、可见性、功能开关、协作者管理、**Fork 与上游卡片（派生关系、与上游差异检查、同步上游、与上游比较、向上游提 PR、Fork 到我的账号）** |
+| `/forks` | Fork 管理 | 当前仓库的 Fork 网络列表（排序：最新/最早/Star/Watch）、Fork 标签（我的/公开私有）、接入或进入、克隆（HTTPS/SSH + 二维码）、复制、删除自己账号下的 Fork（二次确认 + 写日志）、分页加载更多 |
+| `/branch` | 分支管理 | 分支增删改、分支差异对比（文件级 diff + 提交记录，**支持跨仓库比较：base/head 各自选仓库与分支，可比上游与任意 fork**）、分支保护规则 |
 | `/commits` | 提交历史 | 提交列表、改动文件 diff、检索 |
 | `/action` | Action 流水线 | workflows、运行记录（含分支列）、手动触发（解析 workflow inputs）、取消/重跑/日志下载、仓库 Variables/Secrets 管理（RSA 公钥加密写入）、产物与 Check 状态 |
 | `/release` | Release 管理 | 列表/新建/编辑/删除，带进度与断点续传的资产下载 |
 | `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、图片与源文件预览 |
 | `/issue` | Issue 管理 | 列表（状态筛选、标签多选、最新关联提交列）、详情/评论、**Markdown 编辑器与渲染**、**仓库标签下拉管理（含 × 删除标签）** |
-| `/pull` | Pull Request | 列表、详情/评论（Markdown）、文件 diff、审核（RECOMMEND 自动寻找有写权限账号代审）、合并、关闭 |
+| `/pull` | Pull Request | 列表（跨 Fork 时显示 `owner:branch`）、详情/评论（Markdown）、文件 diff、审核（RECOMMEND 自动寻找有写权限账号代审）、合并、关闭、**新建时可选「来源仓库」跨 fork 提 PR（深链 `/pull?headOwner=&headRepo=`）** |
 | `/log` | 操作日志 | 本地留痕、模块/级别过滤、导出、按保留天数自动清理 |
 | `/settings` | 设置 | 主题（浅色/深色/跟随系统）、单页/多页签模式、自动同步与巡检、请求并发/超时/重试、**应用锁（PIN、口令加固、空闲/失焦自动锁定、邮箱验证码重置口令）**、备份/还原/危险操作 |
+
+### Fork 功能细节
+- **创建 Fork**（`POST /repos/{owner}/{repo}/forks`）：目标账号多选、可改名、可 Fork 到组织（`/user/orgs` 懒加载）、仅默认分支；202 异步提交后每 3s 轮询 `GET /repos/{owner}/{repo}`（60s 超时）等待就绪，成功自动切到目标账号并选中新仓库；错误映射 404=源仓库不可读 / 403=禁止 Fork 或权限不足 / 422=已存在同名 Fork
+- **派生关系**：`GET /repos/{owner}/{repo}` 的 `parent`/`source` 展示直接上游与网络源（仓库设置页 + 仓库列表「源自 xxx」）
+- **与上游差异**：跨网络 `GET /repos/{base}/compare/{OWNER:base...OWNER:head}`，`behind_by` 即本仓库落后上游的提交数
+- **同步上游**（`POST /repos/{owner}/{repo}/merge-upstream`）：200 成功 / 409 冲突降级引导「向上游提 PR」/ 404 提示接口不可用走跨仓库 PR 或本地 Git；高危二次确认 + 写日志
+- **跨 Fork 比较与提 PR**：分支管理页 base/head 各自选择仓库+分支；新建 PR 的 head 支持 `owner:branch`（来源仓库下拉 = 本仓库 + 同网络 fork 前 30，可手填）
 
 ### Issue 功能细节
 - 新建/编辑：标题、**Markdown 描述编辑器**（工具栏 + 编辑/预览切换 + Ctrl+Enter 快捷提交，编辑弹窗支持全屏并自适应撑满）、**标签多选组件**（可选仓库已有标签、输入回车可新建；下拉每一项带 `×` 就地删除仓库标签并同步清理已选项）
@@ -77,12 +85,13 @@
 - `MdRender.vue`：Markdown 渲染器（链接新窗口、代码块/表格/任务列表样式，禁用 HTML）
 - `LabelSelect.vue`：标签多选 `el-select`（可选已有标签、回车新建、每项 `×`，`@remove` 回调用例自行处理删除）
 - `FileDiffList.vue` / `SourceFilePreview.vue`：提交/PR 文件 diff 与源文件预览
-- `AppLock.vue` / `QrDialog.vue` / `ThemeSwitch.vue`：应用锁解锁 UI、二维码、主题切换
+- `AppLock.vue` / `QrDialog.vue` / `ThemeSwitch.vue` / `ForkDialog.vue`：应用锁解锁 UI、二维码、主题切换、**Fork 弹窗（目标账号/改名/组织/仅默认分支）**
 
 ### API 层（`src/api`）
-- `request.ts`：axios 实例 + 统一返回 `ApiResult`（200/401/403/422/500）、**并发门闩**（默认为 4，可平滑扩容到 60 档，配置接管）、可选指数退避重试、路径分段编码 `encPath`、GitHub GET 防缓存时间戳
+- `request.ts`：axios 实例 + 统一返回 `ApiResult`（200/401/403/409/422/500）、**并发门闩**（默认为 4，可平滑扩容到 60 档，配置接管）、可选指数退避重试、路径分段编码 `encPath`、GitHub GET 防缓存时间戳
 - `githubAccount.ts`：账号本地加密存取、PAT 校验（区分过期/失效）、导入导出（含主密钥材料）
-- `githubRepo.ts` / `githubBranch.ts` / `githubCommit.ts`：仓库、分支（保护规则、diff 对比）、提交
+- `githubRepo.ts` / `githubBranch.ts` / `githubCommit.ts`：仓库（含 `parent`/`source` 派生关系）、分支（保护规则、diff 对比、**跨网络 `owner:branch` 对比**）、提交
+- `githubFork.ts`：创建 Fork（202 异步）、Fork 列表（排序/分页）、所属组织、**同步上游（`merge-upstream`）**
 - `githubIssue.ts`：Issue、评论、时间线（关联提交）、仓库标签（列表/删除）、提交详情
 - `githubPullRequest.ts`：PR、文件、审核、合并、关闭
 - `githubAction.ts`：workflow/run/jobs/logs、仓库变量与密钥（RSA 密封）、产物、Check 注解

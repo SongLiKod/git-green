@@ -19,6 +19,12 @@ export interface GitHubRepo {
   homepage: string | null
   updated_at: string
   clone_url: string
+  /** 网络内 fork 总数 */
+  network_count?: number
+  /** 仅当本仓库是 fork 时存在：直接上游（被 fork 的那个仓库） */
+  parent?: Pick<GitHubRepo, 'id' | 'name' | 'full_name' | 'owner' | 'private' | 'default_branch' | 'fork'>
+  /** 仅当本仓库是 fork 时存在：网络源头仓库 */
+  source?: Pick<GitHubRepo, 'id' | 'name' | 'full_name' | 'owner' | 'private' | 'default_branch' | 'fork'>
 }
 
 export interface CreateRepoPayload {

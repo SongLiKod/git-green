@@ -26,7 +26,9 @@
 
         <div class="m-section-title">分支差异对比</div>
         <van-cell-group inset>
+          <van-cell title="基准仓库" :value="diffBaseRepo || '本仓库'" is-link @click="openRepoPicker('base')" />
           <van-cell title="基准分支" :value="diffBase || '选择'" is-link @click="openPicker('base')" />
+          <van-cell title="对比仓库" :value="diffHeadRepo || '本仓库'" is-link @click="openRepoPicker('head')" />
           <van-cell title="对比分支" :value="diffHead || '选择'" is-link @click="openPicker('head')" />
         </van-cell-group>
         <div class="m-toolbar">
@@ -85,7 +87,11 @@
         </van-popup>
 
         <van-popup v-model:show="pickerVisible" position="bottom" round>
-          <van-picker :columns="pickerColumns" @confirm="onPickerConfirm" @cancel="pickerVisible = false" />
+          <van-picker v-model="pickerValues" :columns="pickerColumns" @confirm="onPickerConfirm" @cancel="pickerVisible = false" />
+        </van-popup>
+
+        <van-popup v-model:show="repoPickerVisible" position="bottom" round>
+          <van-picker :columns="repoPickerColumns" @confirm="onRepoPickerConfirm" @cancel="repoPickerVisible = false" />
         </van-popup>
       </template>
     </template>
@@ -130,15 +136,26 @@
       <el-card shadow="never">
         <template #header>分支差异对比</template>
         <div class="diff-toolbar">
+          <span>基准仓库</span>
+          <el-select v-model="diffBaseRepo" filterable style="width: 220px">
+            <el-option v-for="r in networkRepos" :key="r.full_name" :label="r.full_name" :value="r.full_name" />
+          </el-select>
           <span>基准分支</span>
-          <el-select v-model="diffBase" filterable placeholder="base" style="width: 200px">
-            <el-option v-for="b in branches" :key="b.name" :label="b.name" :value="b.name" />
+          <el-select v-model="diffBase" filterable placeholder="base" style="width: 180px">
+            <el-option v-for="b in baseBranches" :key="b.name" :label="b.name" :value="b.name" />
+          </el-select>
+          <span>对比仓库</span>
+          <el-select v-model="diffHeadRepo" filterable style="width: 220px">
+            <el-option v-for="r in networkRepos" :key="r.full_name" :label="r.full_name" :value="r.full_name" />
           </el-select>
           <span>对比分支</span>
-          <el-select v-model="diffHead" filterable placeholder="head" style="width: 200px">
-            <el-option v-for="b in branches" :key="b.name" :label="b.name" :value="b.name" />
+          <el-select v-model="diffHead" filterable placeholder="head" style="width: 180px">
+            <el-option v-for="b in headBranches" :key="b.name" :label="b.name" :value="b.name" />
           </el-select>
           <el-button type="primary" :loading="diffLoading" @click="runDiff">开始对比</el-button>
+        </div>
+        <div v-if="crossMode" class="form-tip" style="margin-bottom: 10px">
+          跨仓库比较：基准与对比可分别选择同一仓库网络内的任意 fork / 上游（含外部已接入仓库）
         </div>
         <template v-if="diff">
           <div class="diff-summary">
@@ -212,6 +229,7 @@
 defineOptions({ name: 'BranchManage' })
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -221,12 +239,13 @@ import {
   createBranch,
   deleteBranch,
   renameBranch,
-  getBranchDiff,
+  getBranchDiffAcross,
   getBranchProtection,
   saveBranchProtection,
   deleteBranchProtection
 } from '@/api/githubBranch'
 import type { GitHubBranch, BranchCompareResult } from '@/api/githubBranch'
+import { getRepoSetting } from '@/api/githubRepo'
 import { getCommit } from '@/api/githubIssue'
 import type { GithubCommitInfo } from '@/api/githubIssue'
 import { useIsMobile } from '@/utils/platform'
@@ -238,19 +257,143 @@ const repoStore = useRepoStore()
 const settings = useSettingsStore()
 const logStore = useLogStore()
 const isMobile = useIsMobile()
+const route = useRoute()
 
 const contextsText = ref('')
 const pickerVisible = ref(false)
 const pickerTarget = ref<'from' | 'base' | 'head'>('base')
-const pickerColumns = computed(() => branches.value.map(b => ({ text: b.name })))
+/** 当前选中值（绑定到 van-picker 的 v-model，让弹层打开时定位到已选项） */
+const pickerValues = ref<string[]>([])
+/** 侧边仓库分支加载失败原因（用于给出可读提示） */
+const sideBranchError = ref('')
+const pickerColumns = computed(() => {
+  const list =
+    pickerTarget.value === 'base'
+      ? baseBranches.value
+      : pickerTarget.value === 'head'
+        ? headBranches.value
+        : branches.value
+  // 注意：Vant Picker 的选项必须带 value，否则无法选中（会一直弹回第一项）
+  return list.map(b => ({ text: b.name, value: b.name }))
+})
 
-function openPicker(target: 'from' | 'base' | 'head') {
+/* ---------- 跨仓库比较 ---------- */
+const repoPickerVisible = ref(false)
+const repoPickerTarget = ref<'base' | 'head'>('base')
+const repoPickerColumns = computed(() => networkRepos.value.map(r => ({ text: r.full_name, value: r.full_name })))
+
+function openRepoPicker(target: 'base' | 'head') {
+  repoPickerTarget.value = target
+  repoPickerVisible.value = true
+}
+
+function onRepoPickerConfirm({ selectedValues }: { selectedValues: string[] }) {
+  const v = selectedValues[0] || ''
+  if (repoPickerTarget.value === 'base') diffBaseRepo.value = v
+  else diffHeadRepo.value = v
+  repoPickerVisible.value = false
+  // 仓库变了，对应侧的分支候选需重新拉取（否则会展示旧仓库的分支）
+  loadSideBranches(repoPickerTarget.value)
+}
+
+/** 同网络可选仓库：本仓库 + 上游/源（若为 fork） */
+const networkRepos = ref<{ full_name: string; owner: { login: string }; name: string }[]>([])
+
+async function loadNetworkRepos() {
+  const r = repo.value
+  if (!r) {
+    networkRepos.value = []
+    return
+  }
+  const list: { full_name: string; owner: { login: string }; name: string }[] = [
+    { full_name: r.full_name, owner: { login: r.owner.login }, name: r.name }
+  ]
+  // 若本仓库是 fork，补充上游与网络源
+  if (r.fork) {
+    const pat = await withPat()
+    const res = await getRepoSetting(pat, r.owner.login, r.name)
+    if (res.code === 200 && res.data) {
+      for (const up of [res.data.parent, res.data.source]) {
+        if (up && !list.some(x => x.full_name === up.full_name)) {
+          list.push({ full_name: up.full_name, owner: { login: up.owner.login }, name: up.name })
+        }
+      }
+    }
+  }
+  networkRepos.value = list
+  if (!diffBaseRepo.value) diffBaseRepo.value = r.full_name
+  if (!diffHeadRepo.value) diffHeadRepo.value = r.full_name
+}
+
+const crossMode = computed(
+  () => !!diffBaseRepo.value && !!diffHeadRepo.value && diffBaseRepo.value !== repo.value?.full_name
+    || diffHeadRepo.value !== repo.value?.full_name
+)
+
+/** base/head 各自仓库的分支列表（同仓库时复用 branches） */
+const baseBranches = ref<GitHubBranch[]>([])
+const headBranches = ref<GitHubBranch[]>([])
+
+async function loadSideBranches(side: 'base' | 'head'): Promise<string[]> {
+  const assign = (list: GitHubBranch[]) => {
+    if (side === 'base') baseBranches.value = list
+    else headBranches.value = list
+  }
+  const names = () => (side === 'base' ? baseBranches.value : headBranches.value).map(b => b.name)
+  const full = (side === 'base' ? diffBaseRepo.value : diffHeadRepo.value) || repo.value?.full_name || ''
+  if (!full) return names()
+  // 本仓库：直接复用已加载分支，尚未加载则回退到接口
+  if (full !== repo.value?.full_name || !branches.value.length) {
+    const parts = full.split('/')
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      sideBranchError.value = `仓库地址不合法：${full}`
+      return names()
+    }
+    const pat = await withPat()
+    const res = await getBranches(pat, parts[0], parts[1])
+    if (res.code !== 200) {
+      sideBranchError.value = res.msg
+      assign([])
+      return []
+    }
+    sideBranchError.value = ''
+    assign(res.data || [])
+    return names()
+  }
+  assign(branches.value)
+  return names()
+}
+
+async function openPicker(target: 'from' | 'base' | 'head') {
   pickerTarget.value = target
+  const current =
+    target === 'from' ? createForm.from : target === 'base' ? diffBase.value : diffHead.value
+  pickerValues.value = current ? [current] : []
+  sideBranchError.value = ''
+  // 打开前先确保列数据就绪，避免弹出空白选择器
+  if (target === 'from') {
+    if (!branches.value.length) await loadBranches()
+  } else {
+    const side = target as 'base' | 'head'
+    const cached = side === 'base' ? baseBranches.value : headBranches.value
+    if (!cached.length) await loadSideBranches(side)
+  }
+  if (!pickerColumns.value.length) {
+    ElMessage.warning(
+      sideBranchError.value ? `分支加载失败：${sideBranchError.value}` : '该仓库暂无可选分支'
+    )
+    return
+  }
   pickerVisible.value = true
 }
 
 function onPickerConfirm(payload: { selectedValues: string[] }) {
   const v = payload.selectedValues[0]
+  // 未选中任何项时不覆盖原值（避免把分支置空导致显示「选择」）
+  if (!v) {
+    pickerVisible.value = false
+    return
+  }
   if (pickerTarget.value === 'from') createForm.from = v
   else if (pickerTarget.value === 'base') diffBase.value = v
   else diffHead.value = v
@@ -269,6 +412,9 @@ const createForm = reactive({ name: '', from: '' })
 
 const diffBase = ref('')
 const diffHead = ref('')
+/** 跨仓库比较的 base/head 仓库（默认本仓库） */
+const diffBaseRepo = ref('')
+const diffHeadRepo = ref('')
 const diffLoading = ref(false)
 const diff = ref<BranchCompareResult | null>(null)
 
@@ -296,6 +442,9 @@ async function loadBranches() {
     branches.value = res.data || []
     if (!diffBase.value) diffBase.value = repo.value?.default_branch || branches.value[0]?.name || ''
     if (!diffHead.value) diffHead.value = branches.value.find(b => b.name !== diffBase.value)?.name || ''
+    // 同仓库侧分支列表直接复用本仓库分支
+    if (!diffBaseRepo.value || diffBaseRepo.value === repo.value?.full_name) baseBranches.value = branches.value
+    if (!diffHeadRepo.value || diffHeadRepo.value === repo.value?.full_name) headBranches.value = branches.value
   } else {
     ElMessage.error(`分支加载失败：${res.msg}`)
   }
@@ -383,14 +532,30 @@ async function openRename(row: GitHubBranch) {
   }
 }
 
+/** 拆出仓库 full_name 对应的 owner/name（非法时返回 null） */
+function splitRepo(full: string): { owner: string; name: string } | null {
+  const parts = (full || '').split('/')
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null
+  return { owner: parts[0], name: parts[1] }
+}
+
 async function runDiff() {
   if (!ctx.value || !diffBase.value || !diffHead.value) {
     ElMessage.warning('请选择两个对比分支')
     return
   }
-  diffLoading.value = true
+  const baseSide = splitRepo(diffBaseRepo.value) || { owner: ctx.value.owner, name: ctx.value.repo }
+  const headSide = splitRepo(diffHeadRepo.value) || { owner: ctx.value.owner, name: ctx.value.repo }
   const pat = await withPat()
-  const res = await getBranchDiff(pat, ctx.value.owner, ctx.value.repo, diffBase.value, diffHead.value)
+  diffLoading.value = true
+  // 跨仓库时以 base 仓库为 compare 主体，base/head 均使用 owner:branch 形式
+  const res = await getBranchDiffAcross(
+    pat,
+    baseSide.owner,
+    baseSide.name,
+    `${baseSide.owner}:${diffBase.value}`,
+    `${headSide.owner}:${diffHead.value}`
+  )
   diffLoading.value = false
   if (res.code === 200) diff.value = res.data || null
   else ElMessage.error(`对比失败：${res.msg}`)
@@ -404,6 +569,8 @@ function fileClickable(f: DiffFile): boolean {
 const filePreviewVisible = ref(false)
 const previewFilename = ref('')
 const previewRef = ref('')
+/** 预览文件所属仓库（跨仓库比较时指向对比仓库，否则为当前仓库） */
+const previewRepo = ref<{ owner: string; name: string } | null>(null)
 
 function openFilePreview(f: DiffFile, ref: string) {
   if (!fileClickable(f)) return
@@ -414,6 +581,9 @@ function openFilePreview(f: DiffFile, ref: string) {
 
 function previewDiffFile(f: DiffFile) {
   if (!diffHead.value) return
+  // 跨仓库比较时，文件取自「对比仓库」侧
+  const side = splitRepo(diffHeadRepo.value)
+  if (side) previewRepo.value = side
   openFilePreview(f, diffHead.value)
 }
 
@@ -425,8 +595,9 @@ function previewCommitFile(f: DiffFile) {
 async function previewLoader(name: string) {
   const c = ctx.value
   if (!c || !previewRef.value) throw new Error('预览上下文已失效')
+  const side = previewRepo.value || { owner: c.owner, name: c.repo }
   const pat = await withPat()
-  return loadSourcePreview(pat, c.owner, c.repo, name, previewRef.value)
+  return loadSourcePreview(pat, side.owner, side.name, name, previewRef.value)
 }
 
 const commitVisible = ref(false)
@@ -507,8 +678,52 @@ async function removeProtect() {
   }
 }
 
-watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], loadBranches)
-onMounted(loadBranches)
+/** 仓库切换时：重载分支 + 重置跨仓库选项为本仓库 */
+async function reloadAll() {
+  diff.value = null
+  diffBaseRepo.value = ''
+  diffHeadRepo.value = ''
+  baseBranches.value = []
+  headBranches.value = []
+  await Promise.all([loadBranches(), loadNetworkRepos()])
+}
+
+/** 处理从仓库设置页跳入的跨仓库比较参数（base/head 形如 owner:branch） */
+async function applyRouteQuery() {
+  const q = route.query
+  const baseSpec = typeof q.base === 'string' ? q.base : ''
+  const headSpec = typeof q.head === 'string' ? q.head : ''
+  if (!baseSpec || !headSpec) return
+  const owner = typeof q.repoOwner === 'string' ? q.repoOwner : ''
+  const name = typeof q.repoName === 'string' ? q.repoName : ''
+  if (!owner || !name) return
+  await loadNetworkRepos()
+  if (!networkRepos.value.some(r => r.full_name === `${owner}/${name}`)) {
+    networkRepos.value.push({ full_name: `${owner}/${name}`, owner: { login: owner }, name })
+  }
+  diffBaseRepo.value = `${owner}/${name}`
+  diffHeadRepo.value = repo.value?.full_name || ''
+  diffBase.value = baseSpec.split(':').slice(1).join(':') || baseSpec
+  diffHead.value = headSpec.split(':').slice(1).join(':') || headSpec
+  await Promise.all([loadSideBranches('base'), loadSideBranches('head')])
+  await runDiff()
+}
+
+watch(
+  () => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId],
+  reloadAll
+)
+// base/head 仓库切换时拉取对应仓库的分支列表
+watch([diffBaseRepo, diffHeadRepo], () => {
+  loadSideBranches('base')
+  loadSideBranches('head')
+})
+watch(() => route.query, applyRouteQuery)
+onMounted(() => {
+  reloadAll()
+  loadNetworkRepos()
+  applyRouteQuery()
+})
 </script>
 
 <style scoped>

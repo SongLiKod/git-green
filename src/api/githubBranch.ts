@@ -113,6 +113,30 @@ export function getBranchDiff(
   }) as unknown as Promise<ApiResult<BranchCompareResult>>
 }
 
+/** 仅对分支名分段编码，保留跨仓库比较所需的 `owner:` 前缀与 `...` 分隔符 */
+function encBaseHead(spec: string): string {
+  return spec
+    .split(':')
+    .map(seg => encPath(seg))
+    .join(':')
+}
+
+/**
+ * 跨 fork 网络差异对比：base/head 形如 `owner:branch`（同一仓库网络内可用），
+ * 也接受同仓库裸分支名。
+ */
+export function getBranchDiffAcross(
+  token: string,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string
+): Promise<ApiResult<BranchCompareResult>> {
+  return service.get(`/repos/${owner}/${repo}/compare/${encBaseHead(base)}...${encBaseHead(head)}`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<BranchCompareResult>>
+}
+
 /** 查看分支保护规则（未配置时返回 404 → code 500） */
 export function getBranchProtection(
   token: string,
