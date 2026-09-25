@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'is-desktop': !isMobile }">
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <van-search v-model="searchKw" placeholder="跨账号全局搜索仓库" shape="round" />
@@ -128,16 +128,37 @@
     </div>
 
     <el-row :gutter="14">
-      <!-- 树形结构：账号 → 仓库列表 -->
-      <el-col :span="6">
-        <el-card shadow="never" class="tree-card">
-          <template #header>账号仓库树</template>
+      <!-- 树形结构：账号 → 仓库列表（默认向左折叠成窄条，账号节点默认收起） -->
+      <el-col :span="treeCollapsed ? 1 : 6">
+        <el-card shadow="never" class="tree-card" :class="{ collapsed: treeCollapsed }">
+          <template #header>
+            <div
+              class="tree-header"
+              :title="treeCollapsed ? '展开账号仓库树' : '折叠账号仓库树'"
+              @click="treeCollapsed = !treeCollapsed"
+            >
+              <span class="tree-header-title">
+                <el-icon class="tree-header-arrow"><component :is="treeCollapsed ? ArrowRight : ArrowDown" /></el-icon>
+                <span class="tree-header-text">账号仓库树</span>
+              </span>
+              <el-button
+                v-if="!treeCollapsed && accountKeys.length"
+                link
+                type="primary"
+                size="small"
+                @click.stop="toggleExpandAll"
+              >{{ allAccountExpanded ? '全部收起' : '全部展开' }}</el-button>
+            </div>
+          </template>
           <el-tree
+            ref="treeRef"
             :data="treeData"
             node-key="key"
             :expand-on-click-node="false"
             highlight-current
             @node-click="onNodeClick"
+            @node-expand="onNodeExpand"
+            @node-collapse="onNodeCollapse"
           >
             <template #default="{ data }">
               <span class="tree-node" :class="{ active: data.key === currentKey }">
@@ -152,8 +173,8 @@
       </el-col>
 
       <!-- 仓库信息列表 -->
-      <el-col :span="18">
-        <el-card shadow="never">
+      <el-col :span="treeCollapsed ? 23 : 18" class="repo-col">
+        <el-card shadow="never" class="repo-list-card">
           <template #header>
             <div class="card-header">
               <span>{{ searchKw ? `全局搜索：${searchKw}` : accountTitle }}</span>
@@ -163,7 +184,7 @@
               </div>
             </div>
           </template>
-          <el-table :data="displayRepos" border stripe v-loading="loading" max-height="480">
+          <el-table :data="displayRepos" border stripe v-loading="loading" height="100%">
             <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
             <el-table-column label="仓库" min-width="200">
               <template #default="{ row }">
@@ -307,9 +328,11 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'RepoList' })
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { TreeInstance } from 'element-plus'
+import { ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -333,6 +356,12 @@ const onlyAdHoc = ref(false)
 const createVisible = ref(false)
 const createForm = reactive({ name: '', description: '', private: false })
 const currentKey = ref('')
+
+/** 账号仓库树面板：默认折叠，点击卡片标题栏展开/收起 */
+const treeCollapsed = ref(true)
+const treeRef = ref<TreeInstance>()
+/** 当前已展开的账号节点 key（账号节点默认收起） */
+const expandedKeys = ref<string[]>([])
 
 const loading = computed(() => !!repoStore.loadingMap[repoStore.currentAccountId])
 
@@ -367,6 +396,56 @@ const treeData = computed<TreeNode[]>(() =>
   })
 )
 
+/** 记录账号节点的展开状态（箭头点击时由 el-tree 事件驱动） */
+function onNodeExpand(data: TreeNode) {
+  markExpanded(data.key, true)
+}
+function onNodeCollapse(data: TreeNode) {
+  markExpanded(data.key, false)
+}
+
+function markExpanded(key: string, expanded: boolean) {
+  const exists = expandedKeys.value.includes(key)
+  if (expanded && !exists) expandedKeys.value.push(key)
+  if (!expanded && exists) expandedKeys.value = expandedKeys.value.filter(k => k !== key)
+}
+
+/** 程序化展开/收起某个账号节点 */
+function setNodeExpanded(key: string, expanded: boolean) {
+  const node = treeRef.value?.getNode(key)
+  if (!node) return
+  if (expanded) node.expand()
+  else node.collapse()
+  markExpanded(key, expanded)
+}
+
+/** 有仓库的账号节点 key（叶子账号节点无展开箭头，不参与展开/收起） */
+const accountKeys = computed(() => treeData.value.filter(n => (n.children?.length ?? 0) > 0).map(n => n.key))
+
+/** 账号节点是否已全部展开 */
+const allAccountExpanded = computed(() => {
+  const keys = accountKeys.value
+  return keys.length > 0 && keys.every(k => expandedKeys.value.includes(k))
+})
+
+/** 卡片头部「全部展开 / 全部收起」 */
+function toggleExpandAll() {
+  const expand = !allAccountExpanded.value
+  accountKeys.value.forEach(key => setNodeExpanded(key, expand))
+}
+
+/** 刷新仓库等数据变化会重建树节点并重置展开状态，按记录恢复账号节点的展开 */
+watch(
+  treeData,
+  async () => {
+    await nextTick()
+    for (const key of expandedKeys.value) {
+      const node = treeRef.value?.getNode(key)
+      if (node && !node.isLeaf && !node.expanded) node.expand()
+    }
+  }
+)
+
 /** 按「只看收藏 / 只看外部」过滤 */
 function applyFilters(list: GitHubRepo[]): GitHubRepo[] {
   return list.filter(
@@ -399,6 +478,9 @@ function onNodeClick(node: TreeNode) {
   currentKey.value = node.key
   if (node.isAccount) {
     repoStore.setCurrentAccount(node.id)
+    // 点击账号节点：同时展开/收起其下的仓库列表
+    const treeNode = treeRef.value?.getNode(node.key)
+    if (treeNode && !treeNode.isLeaf) setNodeExpanded(node.key, !treeNode.expanded)
   } else {
     const accountId = node.key.split(':')[1]
     if (repoStore.currentAccountId !== accountId) repoStore.setCurrentAccount(accountId)
@@ -620,6 +702,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 桌面端：页面撑满可视高度，下方行区域自适应拉伸，列表底部不再留白 */
+.page.is-desktop {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.page.is-desktop > .el-row {
+  flex: 1 1 auto;
+}
 .page-toolbar {
   margin-bottom: 14px;
   display: flex;
@@ -627,6 +718,92 @@ onMounted(async () => {
 }
 .tree-card {
   min-height: 400px;
+  /* 拉满所在列高度，与右侧列表底部对齐，避免列下方留空 */
+  height: 100%;
+}
+/* 右侧：列表卡片弹性填满剩余高度，下方 Git 卡片保持自然高度 */
+.repo-col {
+  display: flex;
+  flex-direction: column;
+}
+/* 列表卡片与表格一起拉伸填满行高，卡片底部不留空白 */
+.repo-list-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.repo-list-card :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.repo-list-card :deep(.el-table) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* 折叠状态：向左收成一条窄轨，仅保留可点击的标题条 */
+.tree-card.collapsed {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tree-card.collapsed :deep(.el-card__header) {
+  flex: 1;
+  display: flex;
+  padding: 14px 4px;
+}
+.tree-card.collapsed :deep(.el-card__body) {
+  display: none;
+}
+.tree-card.collapsed .tree-header {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+.tree-card.collapsed .tree-header-title {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.tree-card.collapsed .tree-header-text {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+.tree-card.collapsed .tree-header-arrow {
+  font-size: 16px;
+}
+/* 窄窗口下轨道只留箭头，避免竖排文字被裁切 */
+@media (max-width: 900px) {
+  .tree-card.collapsed :deep(.el-card__header) {
+    padding: 14px 2px;
+  }
+  .tree-card.collapsed .tree-header-text {
+    display: none;
+  }
+}
+.tree-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.tree-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.tree-header-arrow {
+  color: var(--text-secondary);
 }
 .tree-node {
   display: inline-flex;

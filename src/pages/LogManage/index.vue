@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'is-desktop': !isMobile }">
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <van-search v-model="keyword" placeholder="检索动作 / 详情" />
@@ -50,7 +50,14 @@
       <span class="retention">保留 {{ settings.config.logRetentionDays }} 天，共 {{ logs.length }} 条</span>
     </div>
 
-    <el-table :data="filtered" border stripe v-loading="loading" max-height="620">
+    <el-table
+      :data="filtered"
+      border
+      stripe
+      v-loading="loading"
+      :height="filtered.length ? '100%' : undefined"
+      :class="{ 'fill-table': filtered.length > 0 }"
+    >
       <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
       <el-table-column label="时间" width="170">
         <template #default="{ row }">{{ new Date(row.time).toLocaleString() }}</template>
@@ -182,5 +189,18 @@ onMounted(load)
   font-size: 12px;
   color: var(--text-secondary);
   margin-left: auto;
+}
+/* 桌面端：页面撑满可视高度，列表填满剩余空间，底部不留空白 */
+.page.is-desktop {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.page.is-desktop > .page-toolbar {
+  flex: none;
+}
+.page.is-desktop > .el-table.fill-table {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 </style>
