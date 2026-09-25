@@ -1,5 +1,5 @@
 ﻿<template>
-  <div class="page">
+  <div class="page" :class="{ 'is-desktop': !isMobile }">
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <van-empty v-if="!ctx" description="请在顶栏选择仓库" />
@@ -99,7 +99,7 @@
     <!-- 桌面形态（Element Plus） -->
     <template v-else>
     <template v-if="ctx">
-      <el-card shadow="never" class="mb14">
+      <el-card shadow="never" class="mb14 list-card">
         <template #header>
           <div class="card-header">
             <span>远程分支（{{ branches.length }}）</span>
@@ -109,7 +109,7 @@
             </div>
           </div>
         </template>
-        <el-table :data="branches" border stripe v-loading="loading" max-height="360">
+        <el-table :data="branches" border stripe v-loading="loading" height="100%">
           <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="分支名" min-width="200">
             <template #default="{ row }">
@@ -729,6 +729,29 @@ onMounted(() => {
 <style scoped>
 .mb14 {
   margin-bottom: 14px;
+}
+/* 桌面端：页面撑满可视高度，列表卡片填满剩余空间，底部不留空白 */
+.page.is-desktop {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.page.is-desktop > .list-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.page.is-desktop > .list-card :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.page.is-desktop > .list-card :deep(.el-table) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .card-header {
   display: flex;

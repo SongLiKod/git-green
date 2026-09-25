@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'is-desktop': !isMobile }">
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <div class="m-toolbar">
@@ -77,14 +77,14 @@
       </div>
 
       <el-empty v-if="!repo" description="请先选择仓库" />
-      <el-card v-else shadow="never">
+      <el-card v-else shadow="never" class="list-card">
         <template #header>
           <div class="card-header">
             <span>共 {{ forks.length }}{{ hasMore ? '+' : '' }} 个 Fork</span>
             <el-tag size="small" type="info">{{ repo.forks_count }} 个（GitHub 统计）</el-tag>
           </div>
         </template>
-        <el-table :data="forks" border stripe v-loading="loading" max-height="520">
+        <el-table :data="forks" border stripe v-loading="loading" height="100%">
           <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="仓库" min-width="220">
             <template #default="{ row }">
@@ -317,6 +317,29 @@ onMounted(reload)
   display: flex;
   gap: 10px;
   align-items: center;
+}
+/* 桌面端：页面撑满可视高度，列表卡片填满剩余空间，底部不留空白 */
+.page.is-desktop {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.page.is-desktop > .list-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.page.is-desktop > .list-card :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.page.is-desktop > .list-card :deep(.el-table) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .ctx-label {
   font-weight: 600;
