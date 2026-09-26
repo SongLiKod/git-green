@@ -71,7 +71,7 @@
 </template>
 
 <script lang="ts">
-import { getFileContent, getFileRaw, getFileBlob } from '@/api/githubFile'
+import { getFileContent, getFileRaw, getFileRawBytes } from '@/api/githubFile'
 
 export interface PreviewResult {
   kind: 'text' | 'image'
@@ -119,7 +119,7 @@ export async function loadSourcePreview(
   const raw = await getFileRaw(token, owner, repo, path, ref)
   if (raw.code !== 200 || !raw.data) throw new Error(raw.msg || '读取失败')
   if (raw.data.base64) return { kind: 'image', image: `data:${mime};base64,${raw.data.base64}` }
-  const blobRes = await getFileBlob(token, raw.data.downloadUrl)
+  const blobRes = await getFileRawBytes(token, owner, repo, path, ref)
   if (blobRes.code === 200 && blobRes.data) return { kind: 'image', image: URL.createObjectURL(blobRes.data) }
   throw new Error('图片读取失败')
 }
