@@ -35,6 +35,10 @@
     </template>
     <div v-if="loading" class="sp-loading"><el-icon class="is-loading"><Loading /></el-icon> 正在加载源文件...</div>
     <div v-else-if="kind === 'image' && image" class="sp-img"><img :src="image" alt="preview" /></div>
+    <div v-else-if="kind === 'pdf'" class="sp-pdf">
+      <PdfPreview v-if="dialogVisible && pdfUrl" :src="pdfUrl" @error="onPdfError" />
+      <div v-else class="sp-loading">PDF 预览不可用，可关闭后重试</div>
+    </div>
     <div v-else-if="showMdRender" class="sp-md">
       <MdRender :source="content" empty-text="（文件为空）" />
     </div>
@@ -61,6 +65,10 @@
       </div>
       <div v-if="loading" class="sp-loading-m"><van-loading /></div>
       <div v-else-if="kind === 'image' && image" class="sp-img-m"><img :src="image" alt="preview" /></div>
+      <div v-else-if="kind === 'pdf'" class="sp-pdf-m">
+        <PdfPreview v-if="dialogVisible && pdfUrl" :src="pdfUrl" @error="onPdfError" />
+        <div v-else class="sp-loading-m">PDF 预览不可用，可关闭后重试</div>
+      </div>
       <div v-else-if="showMdRender" class="sp-md-m">
         <MdRender :source="content" empty-text="（文件为空）" />
       </div>
@@ -72,11 +80,14 @@
 
 <script lang="ts">
 import { getFileContent, getFileRaw, getFileRawBytes } from '@/api/githubFile'
+import { isPdfFile } from '@/utils/file'
 
 export interface PreviewResult {
-  kind: 'text' | 'image'
+  kind: 'text' | 'image' | 'pdf'
   content?: string
   image?: string
+  /** PDF 的 blob 地址（交 pdf.js 按页渲染） */
+  url?: string
 }
 
 export const IMAGE_MIMES: Record<string, string> = {
@@ -110,6 +121,12 @@ export async function loadSourcePreview(
   path: string,
   ref: string
 ): Promise<PreviewResult> {
+  // PDF：直接取原始字节（>1MB 的大文件同样可读），交 pdf.js 按页渲染
+  if (isPdfFile(path)) {
+    const res = await getFileRawBytes(token, owner, repo, path, ref)
+    if (res.code !== 200 || !res.data) throw new Error(res.msg || 'PDF读取失败')
+    return { kind: 'pdf', url: URL.createObjectURL(res.data) }
+  }
   const mime = imageMime(path)
   if (!mime) {
     const res = await getFileContent(token, owner, repo, path, ref)
@@ -126,11 +143,14 @@ export async function loadSourcePreview(
 </script>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { useIsMobile } from '@/utils/platform'
 import MdRender from './MdRender.vue'
+
+/** PDF 查看器按需加载（pdf.js 体积较大，不进主包） */
+const PdfPreview = defineAsyncComponent(() => import('@/components/PdfPreview.vue'))
 
 const props = defineProps<{
   modelValue: boolean
@@ -147,7 +167,7 @@ const dialogVisible = computed({
 })
 
 const loading = ref(false)
-const kind = ref<'text' | 'image'>('text')
+const kind = ref<'text' | 'image' | 'pdf'>('text')
 const content = ref('')
 const image = ref('')
 const fullscreen = ref(false)
@@ -159,21 +179,42 @@ const isMarkdown = computed(() => isMarkdownFile(props.filename))
 const showMdToggle = computed(() => isMarkdown.value && !loading.value && kind.value === 'text')
 /** 是否以渲染视图展示 */
 const showMdRender = computed(() => showMdToggle.value && mdView.value === 'render')
+/** PDF 的 blob 地址（关闭时释放，避免大文件常驻内存） */
+const pdfUrl = ref('')
+
+function releasePdf() {
+  if (pdfUrl.value.startsWith('blob:')) URL.revokeObjectURL(pdfUrl.value)
+  pdfUrl.value = ''
+}
+
+function onPdfError(msg: string) {
+  ElMessage.error(`PDF预览失败：${msg}`)
+}
 
 watch(
   () => [props.modelValue, props.filename] as const,
   async ([visible, filename]) => {
-    if (!visible) return
+    if (!visible) {
+      releasePdf()
+      return
+    }
     loading.value = true
     kind.value = 'text'
     content.value = ''
     image.value = ''
+    releasePdf()
     mdView.value = 'render'
     try {
       const r = await props.load(filename)
+      if (!props.modelValue) {
+        // 加载期间已关闭弹窗：丢弃结果，PDF 的 blob 地址立即释放
+        if (r.url?.startsWith('blob:')) URL.revokeObjectURL(r.url)
+        return
+      }
       kind.value = r.kind
       content.value = r.content || ''
       image.value = r.image || ''
+      pdfUrl.value = r.url || ''
     } catch (e: any) {
       ElMessage.error(String(e?.message || e))
     } finally {
@@ -238,6 +279,12 @@ function copyContent() {
 .sp-img img {
   max-width: 100%;
   max-height: 75vh;
+}
+.sp-pdf {
+  height: 60vh;
+}
+.sp-pdf-m {
+  height: 58vh;
 }
 .sp-code {
   background: var(--bg-page);

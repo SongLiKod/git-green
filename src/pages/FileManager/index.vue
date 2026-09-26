@@ -39,7 +39,7 @@
                 plain
                 @click="mdView = mdView === 'render' ? 'source' : 'render'"
               >{{ mdView === 'render' ? '源码' : '渲染' }}</van-button>
-              <van-button v-if="!editing && previewKind !== 'image'" size="mini" plain @click="copyPreviewContent">复制</van-button>
+              <van-button v-if="!editing && previewKind === 'text'" size="mini" plain @click="copyPreviewContent">复制</van-button>
               <van-button
                 v-if="!editing"
                 size="mini"
@@ -59,6 +59,13 @@
             </template>
             <template v-else-if="previewKind === 'image'">
               <div class="img-view-m"><img :src="previewImage" alt="preview" /></div>
+            </template>
+            <template v-else-if="previewKind === 'pdf'">
+              <div class="pdf-view-m">
+                <div v-if="pdfLoading" class="pdf-loading">{{ pdfProgressText }}</div>
+                <PdfPreview v-else-if="previewVisible && previewPdfUrl" :src="previewPdfUrl" />
+                <div v-else class="pdf-loading">PDF 下载失败，可返回列表用「下载」保存后查看</div>
+              </div>
             </template>
             <template v-else-if="showMdRender">
               <div class="md-view-m"><MdRender :source="previewContent" empty-text="（文件为空）" /></div>
@@ -147,7 +154,7 @@
     >
       <template #header>
         <div class="preview-header">
-          <span class="preview-title">{{ previewPath }}{{ editing ? '（编辑中）' : previewKind === 'image' ? '（图片预览）' : '（在线预览）' }}</span>
+          <span class="preview-title">{{ previewPath }}{{ editing ? '（编辑中）' : previewKind === 'image' ? '（图片预览）' : previewKind === 'pdf' ? '（PDF 预览）' : '（在线预览）' }}</span>
           <span class="preview-ops">
             <span v-if="showMdToggle" class="md-mode">
               <el-button
@@ -163,7 +170,7 @@
                 @click="mdView = 'source'"
               >源码</el-button>
             </span>
-            <el-button v-if="!editing && previewKind !== 'image'" link type="primary" @click="copyPreviewContent">复制内容</el-button>
+            <el-button v-if="!editing && previewKind === 'text'" link type="primary" @click="copyPreviewContent">复制内容</el-button>
             <el-button link type="primary" @click="fsVisible = !fsVisible">{{ fsVisible ? '退出全屏' : '全屏' }}</el-button>
             <el-button link @click="previewVisible = false">关闭</el-button>
           </span>
@@ -172,6 +179,11 @@
       <el-input v-if="editing" v-model="editContent" type="textarea" :rows="22" class="code-editor" spellcheck="false" />
       <div v-else-if="previewKind === 'image'" class="img-view">
         <img :src="previewImage" alt="preview" />
+      </div>
+      <div v-else-if="previewKind === 'pdf'" class="pdf-view">
+        <div v-if="pdfLoading" class="pdf-loading">{{ pdfProgressText }}</div>
+        <PdfPreview v-else-if="previewVisible && previewPdfUrl" :src="previewPdfUrl" />
+        <div v-else class="pdf-loading">PDF 下载失败，可返回列表用「下载」保存后查看</div>
       </div>
       <div v-else-if="showMdRender" class="md-view">
         <MdRender :source="previewContent" empty-text="（文件为空）" />
@@ -190,7 +202,7 @@
             :loading="isDownloading(previewPath)"
             @click="downloadFile(previewPath, 0, previewRef)"
           >下载文件</el-button>
-          <el-button v-if="previewKind !== 'image'" type="primary" @click="startEdit">编辑此文件</el-button>
+          <el-button v-if="previewKind === 'text'" type="primary" @click="startEdit">编辑此文件</el-button>
           <el-button @click="previewVisible = false">关闭</el-button>
         </template>
       </template>
@@ -201,7 +213,7 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'FileManager' })
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -214,7 +226,11 @@ import { auth } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { saveDownload } from '@/utils/db'
 import { blobDownload, isAndroidClient, requestAndroidNotificationPermission, startNativeDownload, useIsMobile } from '@/utils/platform'
+import { formatBytes, isPdfFile } from '@/utils/file'
 import MdRender from '@/components/MdRender.vue'
+
+/** PDF 查看器按需加载（pdf.js 体积较大，不进主包） */
+const PdfPreview = defineAsyncComponent(() => import('@/components/PdfPreview.vue'))
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -273,8 +289,20 @@ const previewPath = ref('')
 const previewRef = ref('')
 const previewContent = ref('')
 const previewSha = ref('')
-const previewKind = ref<'text' | 'image'>('text')
+const previewKind = ref<'text' | 'image' | 'pdf'>('text')
 const previewImage = ref('')
+/** PDF 预览：整体下载字节后交 pdf.js 按页渲染（超大文件不再受 1MB 预览限制） */
+const previewPdfUrl = ref('')
+const pdfLoading = ref(false)
+const pdfProgress = ref({ loaded: 0, total: 0 })
+/** PDF 下载进度文案（大文件时能看到百分比与体积） */
+const pdfProgressText = computed(() => {
+  const { loaded, total } = pdfProgress.value
+  if (!total) return loaded ? `正在下载 PDF… ${formatBytes(loaded)}` : '正在下载 PDF…'
+  return `正在下载 PDF… ${Math.round((loaded / total) * 100)}%（${formatBytes(loaded)} / ${formatBytes(total)}）`
+})
+let previewPdfObjectUrl = ''
+let pdfLoadSeq = 0
 const fsVisible = ref(false)
 /** Markdown 视图：渲染（默认）/ 源码 */
 const mdView = ref<'render' | 'source'>('render')
@@ -488,6 +516,10 @@ async function previewAtRef(path: string, refVal: string) {
   const c = ctx.value
   if (!c) return
   await nextTick()
+  if (isPdfFile(path)) {
+    await openPdf(path, refVal || branch.value)
+    return
+  }
   const pat = await withPat()
   const mime = imageMime(path)
   if (mime) {
@@ -551,8 +583,54 @@ function openEntry(row: FileEntry) {
   else preview(row)
 }
 
+/**
+ * 打开 PDF 预览：先整体下载字节（带进度，突破 1MB 不能在线预览的限制），
+ * 再交 pdf.js 按页懒渲染，几百页的大 PDF 也不会一次渲染撑爆内存。
+ */
+async function openPdf(path: string, refVal: string) {
+  const c = ctx.value
+  if (!c) return
+  const seq = ++pdfLoadSeq
+  releasePdfUrl()
+  previewPath.value = path
+  previewRef.value = refVal
+  previewContent.value = ''
+  previewSha.value = ''
+  previewKind.value = 'pdf'
+  editing.value = false
+  isNewFile.value = false
+  pdfLoading.value = true
+  pdfProgress.value = { loaded: 0, total: 0 }
+  previewVisible.value = true
+  const pat = await withPat()
+  const res = await getFileRawBytes(pat, c.owner, c.repo, path, refVal, (loaded, total) => {
+    if (seq === pdfLoadSeq) pdfProgress.value = { loaded, total }
+  })
+  if (seq !== pdfLoadSeq) return // 用户已切换到别的文件
+  pdfLoading.value = false
+  if (res.code !== 200 || !res.data) {
+    ElMessage.error(`PDF读取失败：${res.msg}`)
+    logStore.write({ module: 'file', action: '预览PDF', detail: `${c.owner}/${c.repo}:${refVal} ${path} ${res.msg}`, level: 'error' })
+    return
+  }
+  previewPdfObjectUrl = URL.createObjectURL(res.data)
+  previewPdfUrl.value = previewPdfObjectUrl
+}
+
+function releasePdfUrl() {
+  if (previewPdfObjectUrl) {
+    URL.revokeObjectURL(previewPdfObjectUrl)
+    previewPdfObjectUrl = ''
+  }
+  previewPdfUrl.value = ''
+}
+
 async function preview(row: FileEntry) {
   if (!ctx.value) return
+  if (isPdfFile(row.name)) {
+    await openPdf(row.path, branch.value)
+    return
+  }
   const pat = await withPat()
   const mime = imageMime(row.name)
   if (mime) {
@@ -607,7 +685,13 @@ function releaseObjectUrl() {
 
 watch(previewVisible, v => {
   if (v) mdView.value = 'render'
-  if (!v) releaseObjectUrl()
+  if (!v) {
+    releaseObjectUrl()
+    releasePdfUrl()
+    // 关闭时终止尚未完成的 PDF 下载：结果直接丢弃，避免残留 blob URL
+    pdfLoadSeq++
+    pdfLoading.value = false
+  }
 })
 
 function startEdit() {
@@ -617,8 +701,8 @@ function startEdit() {
 }
 
 async function editFile(row: FileEntry) {
-  if (imageMime(row.name)) {
-    ElMessage.info('图片等二进制文件不支持在线编辑')
+  if (imageMime(row.name) || isPdfFile(row.name)) {
+    ElMessage.info('图片、PDF 等二进制文件不支持在线编辑')
     return
   }
   await preview(row)
@@ -820,6 +904,23 @@ onMounted(initRepo)
   padding: 0 4px;
   margin-right: 6px;
 }
+.pdf-view {
+  height: 56vh;
+}
+.pdf-view-m {
+  height: 62vh;
+}
+.pdf-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+  white-space: pre-wrap;
+}
 .md-mode .el-button.active {
   font-weight: 700;
 }
@@ -834,6 +935,7 @@ onMounted(initRepo)
 .el-dialog.is-fullscreen .code-view,
 .el-dialog.is-fullscreen .img-view,
 .el-dialog.is-fullscreen .md-view,
+.el-dialog.is-fullscreen .pdf-view,
 .el-dialog.is-fullscreen .code-editor textarea {
   height: calc(100vh - 150px);
 }
