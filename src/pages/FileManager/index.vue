@@ -22,7 +22,7 @@
 
         <van-action-sheet
           v-model:show="fileSheetVisible"
-          :actions="[{ name: '预览' }, { name: '编辑' }, { name: '复制路径' }, { name: '删除', color: '#ee0a24' }]"
+          :actions="[{ name: '预览' }, { name: '编辑' }, { name: '下载' }, { name: '复制路径' }, { name: '删除', color: '#ee0a24' }]"
           cancel-text="取消"
           close-on-click-action
           @select="onFileSheetSelect"
@@ -40,6 +40,14 @@
                 @click="mdView = mdView === 'render' ? 'source' : 'render'"
               >{{ mdView === 'render' ? '源码' : '渲染' }}</van-button>
               <van-button v-if="!editing && previewKind !== 'image'" size="mini" plain @click="copyPreviewContent">复制</van-button>
+              <van-button
+                v-if="!editing"
+                size="mini"
+                type="primary"
+                plain
+                :loading="isDownloading(previewPath)"
+                @click="downloadFile(previewPath, 0, previewRef)"
+              >下载</van-button>
               <van-button size="mini" plain @click="fsVisible = !fsVisible">{{ fsVisible ? '退出全屏' : '全屏' }}</van-button>
             </div>
             <template v-if="editing">
@@ -108,11 +116,17 @@
           <el-table-column label="大小" width="110">
             <template #default="{ row }">{{ row.type === 'dir' ? '-' : formatSize(row.size) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="300">
+          <el-table-column label="操作" width="360">
             <template #default="{ row }">
               <template v-if="row.type === 'file'">
                 <el-button link type="primary" @click="preview(row)">预览</el-button>
                 <el-button link type="primary" @click="editFile(row)">编辑</el-button>
+                <el-button
+                  link
+                  type="primary"
+                  :loading="isDownloading(row.path)"
+                  @click="downloadFile(row.path, row.size)"
+                >下载</el-button>
                 <el-button link type="primary" @click="copyGithubPath(row)">复制路径</el-button>
                 <el-button link type="danger" @click="removeFile(row)">删除</el-button>
               </template>
@@ -170,6 +184,12 @@
           <el-button type="primary" :loading="saving" @click="submitSave">提交到GitHub远程仓库</el-button>
         </template>
         <template v-else>
+          <el-button
+            type="primary"
+            plain
+            :loading="isDownloading(previewPath)"
+            @click="downloadFile(previewPath, 0, previewRef)"
+          >下载文件</el-button>
           <el-button v-if="previewKind !== 'image'" type="primary" @click="startEdit">编辑此文件</el-button>
           <el-button @click="previewVisible = false">关闭</el-button>
         </template>
@@ -188,10 +208,12 @@ import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
-import { getFileTree, getFileContent, getFileRaw, getFileBlob, saveFile, deleteFile } from '@/api/githubFile'
+import { getFileTree, getFileContent, getFileRaw, getFileRawBytes, contentsRawUrl, saveFile, deleteFile } from '@/api/githubFile'
 import type { FileEntry } from '@/api/githubFile'
+import { auth } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
-import { useIsMobile } from '@/utils/platform'
+import { saveDownload } from '@/utils/db'
+import { blobDownload, isAndroidClient, requestAndroidNotificationPermission, startNativeDownload, useIsMobile } from '@/utils/platform'
 import MdRender from '@/components/MdRender.vue'
 
 const accountStore = useAccountStore()
@@ -222,6 +244,7 @@ async function onFileSheetSelect(action: { name: string }) {
   if (!e) return
   if (action.name === '预览') await preview(e)
   else if (action.name === '编辑') await editFile(e)
+  else if (action.name === '下载') await downloadFile(e.path, e.size)
   else if (action.name === '复制路径') copyGithubPath(e)
   else await removeFile(e)
 }
@@ -246,6 +269,8 @@ const branchNames = ref<string[]>([])
 
 const previewVisible = ref(false)
 const previewPath = ref('')
+/** 预览文件所在的 ref（深链预览可能与当前分支不同，下载需按此 ref 取文件） */
+const previewRef = ref('')
 const previewContent = ref('')
 const previewSha = ref('')
 const previewKind = ref<'text' | 'image'>('text')
@@ -334,6 +359,93 @@ function copyPreviewContent() {
   }
 }
 
+/* ---------- 单文件下载（软件内闭环：Android 原生流式 / Web·Windows blob 落盘） ---------- */
+
+/** 正在下载的文件路径（驱动下载按钮 loading 态） */
+const downloadingPaths = ref<string[]>([])
+
+function isDownloading(path: string): boolean {
+  return downloadingPaths.value.includes(path)
+}
+
+function markDownloading(path: string, active: boolean) {
+  downloadingPaths.value = active
+    ? downloadingPaths.value.includes(path)
+      ? downloadingPaths.value
+      : [...downloadingPaths.value, path]
+    : downloadingPaths.value.filter(p => p !== path)
+}
+
+/**
+ * 下载单个远程文件到本地：
+ * 1) Android 客户端交给原生流式下载（保存到系统下载目录并弹通知）
+ * 2) Web/Windows 走 api.github.com 的 raw 媒体类型拉取字节，浏览器内落盘
+ * 全程不跳转 GitHub 页面，下载记录写入「下载」页。
+ */
+async function downloadFile(path: string, size = 0, refVal = branch.value) {
+  const c = ctx.value
+  if (!c || !path || isDownloading(path)) return
+  // 深链预览可能未带 ref，回退到当前选中分支
+  const targetRef = refVal || branch.value
+  const filename = path.split('/').pop() || path
+  const recordId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const detail = `${c.owner}/${c.repo}:${targetRef} ${path}`
+  markDownloading(path, true)
+  let handedToNative = false
+  try {
+    const pat = await withPat()
+    if (!pat) return
+    // 统一走 api.github.com（带 Token 支持私有仓库/大文件，且预检允许 Authorization，不会被浏览器拦成网络错误）
+    const headers = { ...auth(pat), Accept: 'application/vnd.github.raw' }
+    saveDownload({ id: recordId, filename, percent: 0, status: 'downloading', size })
+    if (isAndroidClient()) requestAndroidNotificationPermission()
+    handedToNative = startNativeDownload(
+      recordId,
+      contentsRawUrl(c.owner, c.repo, path, targetRef),
+      headers,
+      filename,
+      {
+        onDone: saved => {
+          markDownloading(path, false)
+          saveDownload({ id: recordId, filename, percent: 100, status: 'done', size, path: saved.path, uri: saved.uri })
+          ElMessage.success(`${filename} 已保存到 ${saved.path}`)
+          logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 已保存到 ${saved.path}`, level: 'success' })
+        },
+        onError: msg => {
+          markDownloading(path, false)
+          saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: msg })
+          ElMessage.error(`下载失败：${msg}`)
+          logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${msg}`, level: 'error' })
+        }
+      }
+    )
+    if (handedToNative) {
+      ElMessage.success('已开始软件内下载，完成后可在「下载」页打开')
+      return
+    }
+    const res = await getFileRawBytes(pat, c.owner, c.repo, path, targetRef)
+    if (res.code === 200 && res.data) {
+      const fileSize = size || res.data.size
+      blobDownload(res.data, filename)
+      saveDownload({ id: recordId, filename, percent: 100, status: 'done', size: fileSize })
+      ElMessage.success(`${filename} 下载完成`)
+      logStore.write({ module: 'file', action: '下载文件', detail, level: 'success' })
+    } else {
+      saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: res.msg })
+      ElMessage.error(`下载失败：${res.msg}`)
+      logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${res.msg}`, level: 'error' })
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err || '未知错误')
+    saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: msg })
+    ElMessage.error(`下载失败：${msg}`)
+    logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${msg}`, level: 'error' })
+  } finally {
+    // 原生下载是异步的，loading 由 onDone/onError 收尾
+    if (!handedToNative) markDownloading(path, false)
+  }
+}
+
 async function initRepo() {
   const r = repoStore.currentRepo
   if (!r) {
@@ -389,7 +501,7 @@ async function previewAtRef(path: string, refVal: string) {
     if (raw.data.base64) {
       previewImage.value = `data:${mime};base64,${raw.data.base64}`
     } else {
-      const blobRes = await getFileBlob(pat, raw.data.downloadUrl)
+      const blobRes = await getFileRawBytes(pat, c.owner, c.repo, path, refVal || branch.value)
       if (blobRes.code === 200 && blobRes.data) {
         previewObjectUrl = URL.createObjectURL(blobRes.data)
         previewImage.value = previewObjectUrl
@@ -398,6 +510,7 @@ async function previewAtRef(path: string, refVal: string) {
       }
     }
     previewPath.value = path
+    previewRef.value = refVal
     previewKind.value = 'image'
     editing.value = false
     isNewFile.value = false
@@ -410,6 +523,7 @@ async function previewAtRef(path: string, refVal: string) {
     return
   }
   previewPath.value = path
+  previewRef.value = refVal
   previewContent.value = res.data.content
   previewSha.value = res.data.sha
   previewKind.value = 'text'
@@ -452,7 +566,7 @@ async function preview(row: FileEntry) {
     if (raw.data.base64) {
       previewImage.value = `data:${mime};base64,${raw.data.base64}`
     } else {
-      const blobRes = await getFileBlob(pat, raw.data.downloadUrl)
+      const blobRes = await getFileRawBytes(pat, ctx.value.owner, ctx.value.repo, row.path, branch.value)
       if (blobRes.code === 200 && blobRes.data) {
         previewObjectUrl = URL.createObjectURL(blobRes.data)
         previewImage.value = previewObjectUrl
@@ -462,6 +576,7 @@ async function preview(row: FileEntry) {
       }
     }
     previewPath.value = row.path
+    previewRef.value = branch.value
     previewKind.value = 'image'
     editing.value = false
     isNewFile.value = false
@@ -474,6 +589,7 @@ async function preview(row: FileEntry) {
     return
   }
   previewPath.value = row.path
+  previewRef.value = branch.value
   previewContent.value = res.data.content
   previewSha.value = res.data.sha
   previewKind.value = 'text'

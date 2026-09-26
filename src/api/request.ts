@@ -67,6 +67,15 @@ service.interceptors.response.use(
     const c = err.response?.status
     const d = err.response?.data
     let detail = typeof d?.message === 'string' ? d.message : ''
+    // blob 响应（下载/原始字节）的错误体也是 Blob，读出来才有可读的 GitHub 错误信息
+    if (!detail && typeof Blob !== 'undefined' && d instanceof Blob && d.type.includes('json')) {
+      try {
+        const parsed = JSON.parse(await d.text())
+        if (typeof parsed?.message === 'string') detail = parsed.message
+      } catch {
+        /* 错误体不是合法 JSON 时忽略 */
+      }
+    }
     const subErrors = Array.isArray(d?.errors) ? d.errors.map((e: any) => e?.message).filter(Boolean) : []
     if (subErrors.length) detail = subErrors.join('；')
     const withDetail = (msg: string) => (detail && detail !== 'Unprocessable Entity' ? `${msg}：${detail}` : msg)

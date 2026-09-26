@@ -69,7 +69,7 @@ export async function getFileContent(
 }
 
 export interface FileRawResult {
-  /** Base64 原始内容（文件>1MB时为null，需用downloadUrl回退） */
+  /** Base64 原始内容（文件>1MB时为null，需用 getFileRawBytes 回退） */
   base64: string | null
   sha: string
   size: number
@@ -101,12 +101,32 @@ export async function getFileRaw(
   }
 }
 
-/** 大文件回退：经 download_url 带Token拉取blob（raw.githubusercontent 支持CORS） */
-export function getFileBlob(token: string, url: string): Promise<ApiResult<Blob>> {
-  return service.get(url, {
+/** contents API 的原始内容地址（原生下载等需要真实 URL 的场景） */
+export function contentsRawUrl(owner: string, repo: string, path: string, ref: string): string {
+  return `https://api.github.com/repos/${owner}/${repo}/contents/${encPath(path)}?ref=${encodeURIComponent(ref)}`
+}
+
+/**
+ * 拉取文件原始字节（单文件下载、>1MB 大文件回退预览）。
+ * 走 api.github.com 的 `application/vnd.github.raw` 媒体类型：
+ * 1) 带 Token，私有仓库可用
+ * 2) 大文件同样返回字节（contents JSON 的 content 为空）
+ * 3) 兼容浏览器 CORS：raw.githubusercontent.com 对带 Authorization 的请求
+ *    预检固定返回 403，请求会被浏览器拦成 Network Error（提示“网络失败”）
+ * 4) 追加时间戳参数绕开 60s 的 HTTP 缓存，避免刚提交就下载到旧内容
+ */
+export function getFileRawBytes(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string
+): Promise<ApiResult<Blob>> {
+  return service.get(`/repos/${owner}/${repo}/contents/${encPath(path)}`, {
+    params: { ref, _: Date.now() },
     responseType: 'blob',
     timeout: 0,
-    headers: auth(token)
+    headers: { ...auth(token), Accept: 'application/vnd.github.raw' }
   }) as unknown as Promise<ApiResult<Blob>>
 }
 

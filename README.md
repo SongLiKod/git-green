@@ -33,7 +33,7 @@
 | `/commits` | 提交历史 | 提交列表、改动文件 diff、检索 |
 | `/action` | Action 流水线 | workflows、运行记录（含分支列）、手动触发（解析 workflow inputs）、取消/重跑/日志下载、仓库 Variables/Secrets 管理（RSA 公钥加密写入）、产物与 Check 状态 |
 | `/release` | Release 管理 | 列表/新建/编辑/删除，带进度与断点续传的资产下载 |
-| `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、图片预览、`.md` 源码/渲染双视图 |
+| `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、**单文件下载（Android 原生流式 / Web·Windows blob 落盘，记录进「下载」页）**、图片预览、`.md` 源码/渲染双视图 |
 | `/issue` | Issue 管理 | 列表（状态筛选、标签多选、最新关联提交列）、详情/评论、**Markdown 编辑器与渲染**、**仓库标签下拉管理（含 × 删除标签）** |
 | `/pull` | Pull Request | 列表（跨 Fork 时显示 `owner:branch`）、详情/评论（Markdown）、文件 diff、审核（RECOMMEND 自动寻找有写权限账号代审）、合并、关闭、**新建时可选「来源仓库」跨 fork 提 PR（深链 `/pull?headOwner=&headRepo=`）** |
 | `/log` | 操作日志 | 本地留痕、模块/级别过滤、导出、按保留天数自动清理 |
