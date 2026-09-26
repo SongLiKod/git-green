@@ -11,8 +11,8 @@ android {
         applicationId "com.gitgreen.app"
         minSdk 24
         targetSdk 34
-        versionCode 40300
-        versionName "4.3.0"
+        versionCode 40400
+        versionName "4.4.0"
     }
 
     buildTypes {
