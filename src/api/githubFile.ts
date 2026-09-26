@@ -120,13 +120,15 @@ export function getFileRawBytes(
   owner: string,
   repo: string,
   path: string,
-  ref: string
+  ref: string,
+  onProgress?: (loaded: number, total: number) => void
 ): Promise<ApiResult<Blob>> {
   return service.get(`/repos/${owner}/${repo}/contents/${encPath(path)}`, {
     params: { ref, _: Date.now() },
     responseType: 'blob',
     timeout: 0,
-    headers: { ...auth(token), Accept: 'application/vnd.github.raw' }
+    headers: { ...auth(token), Accept: 'application/vnd.github.raw' },
+    onDownloadProgress: e => onProgress?.(e.loaded, e.total || 0)
   }) as unknown as Promise<ApiResult<Blob>>
 }
 

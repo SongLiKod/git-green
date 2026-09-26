@@ -2,6 +2,8 @@ node_modules
 dist
 dist-electron
 release
+# pdfjs-dist 运行时资源（由 scripts/copy-pdfjs-assets.js 在 predev/prebuild 生成）
+public/pdfjs
 *.local
 .DS_Store
 android/app/build
