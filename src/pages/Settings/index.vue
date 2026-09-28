@@ -38,7 +38,7 @@
         <el-input-number :model-value="config.logRetentionDays" :min="7" :max="3650" @update:model-value="(v: any) => settings.update({ logRetentionDays: v || 90 })" />
       </div>
       <div class="setting-row">
-        <div class="setting-row__label"><span>列表显示序号</span><span class="desc">在各列表首列显示行号（仓库 / 分支 / Action / Release / 文件 / 日志）</span></div>
+        <div class="setting-row__label"><span>列表显示序号</span><span class="desc">在各列表首列显示行号，桌面表格与移动端卡片均生效（仓库 / 分支 / Action / Release / 文件 / 日志 等）</span></div>
         <el-switch :model-value="config.showRowIndex" @change="(v: any) => settings.update({ showRowIndex: !!v })" />
       </div>
       <div class="setting-row">

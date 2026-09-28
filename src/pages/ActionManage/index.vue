@@ -15,8 +15,9 @@
             <van-button size="small" :loading="loading" @click="loadWorkflows">刷新</van-button>
           </div>
           <van-empty v-if="workflows.length === 0" description="暂无工作流" />
-          <div v-for="w in workflows" :key="w.id" class="m-card" @click="openWSheet(w)">
+          <div v-for="(w, idx) in workflows" :key="w.id" class="m-card" @click="openWSheet(w)">
             <div class="m-card-head">
+              <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
               <div class="m-card-title">
                 <div class="t">{{ w.name }}</div>
                 <div class="m-sub">{{ w.path }}</div>
@@ -33,8 +34,9 @@
             <van-switch v-model="autoRefresh" size="18" title="自动刷新" />
           </div>
           <van-empty v-if="runs.length === 0" description="暂无运行记录" />
-          <div v-for="r in runs" :key="r.id" class="m-card">
+          <div v-for="(r, idx) in runs" :key="r.id" class="m-card">
             <div class="m-card-head">
+              <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
               <div class="m-card-title">
                 <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
                 <div class="m-sub">{{ r.head_branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
@@ -124,7 +126,7 @@
 
         <van-popup v-model:show="editorVisible" position="bottom" round :style="{ height: '86%' }">
           <div class="m-popup">
-            <div class="m-popup-title">{{ editorPath }}</div>
+            <div class="m-popup-title" :title="editorPath">{{ shortenPath(editorPath, 30) }}</div>
             <van-field v-model="editorContent" type="textarea" rows="16" class="m-yml" :spellcheck="false" />
             <van-field v-model="commitMessage" placeholder="提交信息" style="margin-top: 8px" border />
             <div class="m-actions">
@@ -449,6 +451,7 @@ import type { Workflow, WorkflowRun, RepoVariable, RepoSecret, RunArtifact, Chec
 import { auth, type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
+import { shortenPath } from '@/utils/file'
 import { blobDownload, startNativeDownload, saveNativeBlob } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
 import { useIsMobile } from '@/utils/platform'

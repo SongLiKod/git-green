@@ -13,8 +13,9 @@
       <template v-else>
         <div class="m-section-title">{{ repo.full_name }} 的 Fork（{{ forks.length }}{{ hasMore ? '+' : '' }}）</div>
         <van-empty v-if="forks.length === 0 && !loading" description="暂无 Fork" />
-        <div v-for="f in forks" :key="f.full_name" class="m-card">
+        <div v-for="(f, idx) in forks" :key="f.full_name" class="m-card">
           <div class="m-card-head">
+            <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
               <div class="t">{{ f.full_name }}</div>
               <div class="m-sub">{{ f.description || '暂无简介' }}</div>

@@ -17,8 +17,9 @@
         </van-button>
       </div>
       <van-empty v-if="displayRepos.length === 0" :description="emptyText" />
-      <div v-for="r in displayRepos" :key="r.full_name" class="m-card" @click="openSheet(r)">
+      <div v-for="(r, idx) in displayRepos" :key="r.full_name" class="m-card" @click="openSheet(r)">
         <div class="m-card-head">
+          <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
           <div class="m-card-title">
             <div class="t">
               <span v-if="repoStore.getMeta(r.full_name).pin" style="color: var(--color-primary)">★ </span>{{ r.name }}

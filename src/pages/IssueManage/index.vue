@@ -12,8 +12,9 @@
           <van-button size="small" type="primary" @click="openCreate">新建</van-button>
         </div>
         <van-empty v-if="issues.length === 0" description="暂无 Issue" />
-        <div v-for="i in issues" :key="i.number" class="m-card" @click="openDetail(i)">
+        <div v-for="(i, idx) in issues" :key="i.number" class="m-card" @click="openDetail(i)">
           <div class="m-card-head">
+            <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
               <div class="t">#{{ i.number }} {{ i.title }}</div>
               <div class="m-sub">{{ i.user?.login }} · {{ new Date(i.updated_at).toLocaleString() }}</div>
