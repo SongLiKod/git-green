@@ -12,8 +12,9 @@
           <van-button size="small" type="primary" @click="openCreate">新建</van-button>
         </div>
         <van-empty v-if="prs.length === 0" description="暂无 Pull Request" />
-        <div v-for="p in prs" :key="p.number" class="m-card" @click="openDetail(p)">
+        <div v-for="(p, idx) in prs" :key="p.number" class="m-card" @click="openDetail(p)">
           <div class="m-card-head">
+            <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
               <div class="t">#{{ p.number }} {{ p.title }}</div>
               <div class="m-sub">{{ prHeadText(p) }} → {{ p.base.ref }} · {{ p.user?.login }}</div>

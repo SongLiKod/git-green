@@ -15,8 +15,9 @@
             <van-button size="small" :loading="loading" @click="loadWorkflows">刷新</van-button>
           </div>
           <van-empty v-if="workflows.length === 0" description="暂无工作流" />
-          <div v-for="w in workflows" :key="w.id" class="m-card" @click="openWSheet(w)">
+          <div v-for="(w, idx) in workflows" :key="w.id" class="m-card" @click="openWSheet(w)">
             <div class="m-card-head">
+              <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
               <div class="m-card-title">
                 <div class="t">{{ w.name }}</div>
                 <div class="m-sub">{{ w.path }}</div>
@@ -33,8 +34,9 @@
             <van-switch v-model="autoRefresh" size="18" title="自动刷新" />
           </div>
           <van-empty v-if="runs.length === 0" description="暂无运行记录" />
-          <div v-for="r in runs" :key="r.id" class="m-card">
+          <div v-for="(r, idx) in runs" :key="r.id" class="m-card">
             <div class="m-card-head">
+              <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
               <div class="m-card-title">
                 <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
                 <div class="m-sub">{{ r.head_branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>

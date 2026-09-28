@@ -12,13 +12,17 @@
         <div class="m-sub" style="margin: 6px 14px 0">{{ currentPath || '根目录' }}</div>
         <van-empty v-if="entries.length === 0" description="空目录" />
         <van-cell
-          v-for="e in entries"
+          v-for="(e, idx) in entries"
           :key="e.path"
           :title="(e.type === 'dir' ? '📁 ' : '📄 ') + e.name"
           :label="e.type === 'dir' ? '目录' : formatSize(e.size)"
           :is-link="e.type === 'dir'"
           @click="onMEntry(e)"
-        />
+        >
+          <template v-if="settings.config.showRowIndex" #icon>
+            <span class="m-idx m-idx--cell">{{ idx + 1 }}</span>
+          </template>
+        </van-cell>
 
         <van-action-sheet
           v-model:show="fileSheetVisible"

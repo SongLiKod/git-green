@@ -576,6 +576,26 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
 }
+/* 移动端列表行号（设置「列表显示序号」开启时显示） */
+.m-idx {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-primary);
+  background: rgba(0, 148, 88, 0.08);
+}
+.m-idx--cell {
+  margin-right: 6px;
+}
 .m-card-title {
   flex: 1;
   min-width: 0;

@@ -14,8 +14,9 @@
         <span class="m-sub" style="margin-left: auto">保留 {{ settings.config.logRetentionDays }} 天 · {{ filtered.length }} 条</span>
       </div>
       <van-empty v-if="filtered.length === 0" description="暂无操作日志" />
-      <div v-for="l in filtered" :key="l.id" class="m-card">
+      <div v-for="(l, idx) in filtered" :key="l.id" class="m-card">
         <div class="m-card-head">
+          <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
           <div class="m-card-title">
             <div class="t">{{ l.action }}</div>
             <div class="m-sub">{{ l.detail || '-' }}</div>

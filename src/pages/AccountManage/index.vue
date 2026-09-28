@@ -12,8 +12,9 @@
         <van-button size="small" @click="fileInput?.click()">导入配置</van-button>
       </div>
       <van-empty v-if="accountStore.accounts.length === 0" description="暂无账号，点击上方添加" />
-      <div v-for="a in accountStore.accounts" :key="a.id" class="m-card">
+      <div v-for="(a, idx) in accountStore.accounts" :key="a.id" class="m-card">
         <div class="m-card-head">
+          <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
           <van-image round width="36" height="36" :src="a.avatarUrl" />
           <div class="m-card-title">
             <div class="t">{{ a.remark || a.username }}</div>

@@ -9,8 +9,9 @@
           <van-button size="small" :loading="loading" @click="reload">刷新</van-button>
         </div>
         <van-empty v-if="!loading && commits.length === 0" description="暂无提交" />
-        <div v-for="c in commits" :key="c.sha" class="m-card" @click="openCommit(c)">
+        <div v-for="(c, idx) in commits" :key="c.sha" class="m-card" @click="openCommit(c)">
           <div class="m-card-head">
+            <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
               <div class="t">{{ firstLine(c.commit.message) }}</div>
               <div class="m-sub">{{ shortSha(c.sha) }} · {{ c.author?.login || c.commit.author.name || '未知' }} · {{ new Date(c.commit.author.date).toLocaleString() }}</div>

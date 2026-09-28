@@ -8,8 +8,9 @@
           <van-button type="primary" size="small" @click="openCreate">创建分支</van-button>
           <van-button size="small" :loading="loading" @click="loadBranches">刷新</van-button>
         </div>
-        <div v-for="b in branches" :key="b.name" class="m-card">
+        <div v-for="(b, idx) in branches" :key="b.name" class="m-card">
           <div class="m-card-head">
+            <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
               <div class="t">{{ b.name }}</div>
               <div class="m-sub" title="点击查看提交详情"><span class="m-link" @click="openCommit(b)">{{ b.commit.sha.slice(0, 8) }}</span></div>

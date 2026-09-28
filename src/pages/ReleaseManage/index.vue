@@ -9,8 +9,9 @@
           <van-button size="small" :loading="loading" @click="loadReleases">刷新</van-button>
         </div>
         <van-empty v-if="releases.length === 0" description="暂无 Release" />
-        <div v-for="r in releases" :key="r.id" class="m-card">
+        <div v-for="(r, idx) in releases" :key="r.id" class="m-card">
           <div class="m-card-head">
+            <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
               <div class="t">{{ r.tag_name }}</div>
               <div class="m-sub">{{ r.name && r.name !== r.tag_name ? r.name : '' }} {{ r.published_at ? new Date(r.published_at).toLocaleDateString() : '未发布' }}</div>
@@ -28,8 +29,9 @@
 
         <template v-if="tasks.length">
           <div class="m-section-title">下载任务（完成后可直接打开）</div>
-          <div v-for="t in tasks" :key="t.id" class="m-card">
+          <div v-for="(t, idx) in tasks" :key="t.id" class="m-card">
             <div class="m-card-head">
+              <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
               <div class="m-card-title">
                 <div class="t">{{ t.filename }}</div>
                 <van-progress :percentage="t.percent" :status="t.status === 'error' ? 'exception' : t.percent >= 100 ? 'success' : ''" style="margin-top: 6px" />
