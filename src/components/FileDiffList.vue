@@ -8,9 +8,9 @@
         <span class="diff-name-wrap">
           <span
             class="diff-filename mono diff-filename--link"
-            title="点击预览源文件（点击其余空白折叠/展开 diff）"
+            :title="`${f.filename}\n点击预览源文件（点击其余空白折叠/展开 diff）`"
             @click.stop="onFilenameClick(f)"
-          >{{ f.filename }}</span>
+          >{{ displayFilename(f) }}</span>
         </span>
         <span class="diff-counts"><b class="add">+{{ f.additions }}</b> <b class="del">-{{ f.deletions }}</b></span>
       </div>
@@ -27,6 +27,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useIsMobile } from '@/utils/platform'
+import { shortenPath } from '@/utils/file'
 
 export interface DiffFile {
   filename: string
@@ -61,6 +62,11 @@ function vantStatusTagType(s: string) {
 
 function isOpen(filename: string): boolean {
   return !!openDiffFiles.value[filename]
+}
+
+/** 列表内展示的文件名：移动端列宽有限，超长路径中段省略（完整路径仍见 title 悬浮提示） */
+function displayFilename(f: DiffFile) {
+  return shortenPath(f.filename, isMobile.value ? 28 : 64)
 }
 
 function toggle(filename: string) {

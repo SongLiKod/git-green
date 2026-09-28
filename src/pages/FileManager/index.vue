@@ -31,7 +31,7 @@
         <van-popup v-model:show="previewVisible" position="bottom" round :style="{ height: fsVisible ? '100%' : '86%' }">
           <div class="m-popup">
             <div class="m-popup-title-row">
-              <span class="m-popup-title">{{ previewPath }}</span>
+              <span class="m-popup-title" :title="previewPath">{{ shortenPath(previewPath, 26) }}</span>
               <van-button
                 v-if="showMdToggle"
                 size="mini"
@@ -226,7 +226,7 @@ import { auth } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { saveDownload } from '@/utils/db'
 import { blobDownload, isAndroidClient, requestAndroidNotificationPermission, startNativeDownload, useIsMobile } from '@/utils/platform'
-import { formatBytes, isPdfFile } from '@/utils/file'
+import { formatBytes, isPdfFile, shortenPath } from '@/utils/file'
 import MdRender from '@/components/MdRender.vue'
 
 /** PDF 查看器按需加载（pdf.js 体积较大，不进主包） */
@@ -840,7 +840,11 @@ onMounted(initRepo)
 .m-popup-title-row :deep(.m-popup-title) {
   margin: 0;
   flex: 1;
+  min-width: 0;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .link-text {
   color: var(--color-primary);

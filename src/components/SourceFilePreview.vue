@@ -52,7 +52,7 @@
   <van-popup v-else v-model:show="dialogVisible" position="bottom" round :style="{ height: fullscreen ? '100%' : '86%' }">
     <div class="sp-m-popup">
       <div class="sp-m-title-row">
-        <span class="sp-m-title">源文件预览 {{ filename }}</span>
+        <span class="sp-m-title">源文件预览 {{ shortFilename }}</span>
         <van-button
           v-if="showMdToggle"
           size="mini"
@@ -147,6 +147,7 @@ import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { useIsMobile } from '@/utils/platform'
+import { shortenPath } from '@/utils/file'
 import MdRender from './MdRender.vue'
 
 /** PDF 查看器按需加载（pdf.js 体积较大，不进主包） */
@@ -175,6 +176,8 @@ const fullscreen = ref(false)
 const mdView = ref<'render' | 'source'>('render')
 
 const isMarkdown = computed(() => isMarkdownFile(props.filename))
+/** 移动端标题里的路径：列宽有限，超长时中段省略（完整路径仍可从列表/文件管理器看到） */
+const shortFilename = computed(() => shortenPath(props.filename, 24))
 /** 是否展示「渲染 / 源码」切换（仅 Markdown 文本） */
 const showMdToggle = computed(() => isMarkdown.value && !loading.value && kind.value === 'text')
 /** 是否以渲染视图展示 */
@@ -319,6 +322,7 @@ function copyContent() {
 }
 .sp-m-title {
   flex: 1;
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   overflow: hidden;

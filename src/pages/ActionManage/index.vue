@@ -124,7 +124,7 @@
 
         <van-popup v-model:show="editorVisible" position="bottom" round :style="{ height: '86%' }">
           <div class="m-popup">
-            <div class="m-popup-title">{{ editorPath }}</div>
+            <div class="m-popup-title" :title="editorPath">{{ shortenPath(editorPath, 30) }}</div>
             <van-field v-model="editorContent" type="textarea" rows="16" class="m-yml" :spellcheck="false" />
             <van-field v-model="commitMessage" placeholder="提交信息" style="margin-top: 8px" border />
             <div class="m-actions">
@@ -449,6 +449,7 @@ import type { Workflow, WorkflowRun, RepoVariable, RepoSecret, RunArtifact, Chec
 import { auth, type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
+import { shortenPath } from '@/utils/file'
 import { blobDownload, startNativeDownload, saveNativeBlob } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
 import { useIsMobile } from '@/utils/platform'
