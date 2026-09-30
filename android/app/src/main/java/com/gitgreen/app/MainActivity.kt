@@ -51,6 +51,8 @@ class MainActivity : AppCompatActivity() {
     private val downloadPool = Executors.newCachedThreadPool()
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
     private val cancelledIds = ConcurrentHashMap.newKeySet<String>()
+    /** 正在写入的分片文件键（防止同一资源被并发写坏） */
+    private val activePartKeys = ConcurrentHashMap.newKeySet<String>()
 
     /** 文件选择回调（供 <input type="file"> 导入配置 / 还原备份使用） */
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
@@ -127,8 +129,15 @@ class MainActivity : AppCompatActivity() {
         fun requestNotificationPermission() = this@MainActivity.requestNotificationPermission()
     }
 
-    /** 建立连接并跟随重定向，返回已就绪（2xx）的连接 */
-    private fun openStream(id: String, urlStr: String, headers: JSONObject?): HttpURLConnection {
+    /** 服务端判定 Range 起点越界（本地分片与远端已不一致），需丢弃分片从头下载 */
+    private class RangeNotSatisfiableException : RuntimeException("HTTP 416")
+
+    /**
+     * 建立连接并跟随重定向，返回已就绪（2xx）的连接。
+     * @param rangeStart >0 时带 `Range: bytes=n-` 断点续传；Range 必须每一跳都带，
+     * 因为真正返回数据的是重定向后的签名地址，只在首跳带会退化成整包下载。
+     */
+    private fun openStream(id: String, urlStr: String, headers: JSONObject?, rangeStart: Long = 0L): HttpURLConnection {
         var currentUrl = urlStr
         var redirects = 0
         while (true) {
@@ -148,6 +157,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            if (rangeStart > 0) conn.setRequestProperty("Range", "bytes=$rangeStart-")
             activeConnections[id] = conn
             val code = conn.responseCode
             if (code in 300..399) {
@@ -160,25 +170,93 @@ class MainActivity : AppCompatActivity() {
                 }
                 throw RuntimeException("重定向异常 HTTP $code")
             }
+            if (code == 416) throw RangeNotSatisfiableException()
             if (code !in 200..299) throw RuntimeException("HTTP $code")
             return conn
         }
     }
 
-    /** App 内流式下载：边下边回传进度，同时更新系统通知，完成后落盘到系统下载目录 */
+    /**
+     * App 内流式下载（支持断点续传）：边下边回传进度，同时更新系统通知，完成后落盘到系统下载目录。
+     *
+     * 续传要点：
+     * 1. 分片按「下载地址 + 文件名」落 cacheDir，同资源再次发起时能找到上次的半成品；
+     * 2. 请求带 Range，服务端回 206 → 追加写；回 200 → 说明不接受续传，丢弃分片覆盖重下；
+     * 3. 只有「成功」或「用户主动取消」才清理分片，其它失败保留，供下次继续下载。
+     */
     private fun streamDownload(id: String, urlStr: String, filename: String, headers: JSONObject?) {
         val safeName = sanitize(filename)
-        var tmp: File? = null
-        var conn: HttpURLConnection? = null
+        val partKey = stablePartKey(urlStr, filename)
+        val tmp = File(cacheDir, "dl_$partKey.tmp")
+        // 同一资源只允许一个下载线程持有分片文件，避免两个线程同时 append 写坏半成品
+        if (!activePartKeys.add(partKey)) {
+            activeConnections.remove(id)
+            cancelledIds.remove(id)
+            postError(id, "该文件正在下载中，请勿重复发起")
+            return
+        }
+        var finished = false
+        var cancelled = false
         try {
-            tmp = File(cacheDir, "dl_$id.tmp")
-            conn = openStream(id, urlStr, headers)
-            val total = conn.contentLengthLong.takeIf { it > 0 } ?: -1L
-            var loaded = 0L
+            try {
+                runStreamDownload(id, urlStr, headers, safeName, tmp, allowResume = true)
+            } catch (e: RangeNotSatisfiableException) {
+                // 本地分片已超过远端总长（资源被替换或分片损坏），丢弃后从头下载
+                tmp.delete()
+                runStreamDownload(id, urlStr, headers, safeName, tmp, allowResume = false)
+            }
+            finished = true
+        } catch (e: Exception) {
+            cancelled = cancelledIds.contains(id)
+            if (cancelled) {
+                postError(id, "已取消")
+                NotificationManagerCompat.from(this).cancel(id.hashCode())
+            } else {
+                postError(id, e.message ?: "下载失败")
+                notifyError(id, safeName, e.message ?: "下载失败")
+            }
+        } finally {
+            activeConnections.remove(id)
+            cancelledIds.remove(id)
+            activePartKeys.remove(partKey)
+            // 成功或用户取消 → 清理分片；其余失败保留分片，供下次断点续传
+            if (finished || cancelled) tmp.delete()
+        }
+    }
+
+    /**
+     * 同一「下载地址 + 文件名」始终映射到同一个分片文件。
+     * String.hashCode 的取值由语言规范固定，跨进程/跨版本稳定，可安全用作缓存键。
+     */
+    private fun stablePartKey(url: String, filename: String): String =
+        Integer.toHexString(url.hashCode() * 31 + filename.hashCode())
+
+    /** 单次连接的完整下载流程：定位分片 → Range 续传 → 流式写入 → 完整性校验 → 落盘 */
+    private fun runStreamDownload(
+        id: String,
+        urlStr: String,
+        headers: JSONObject?,
+        safeName: String,
+        tmp: File,
+        allowResume: Boolean
+    ) {
+        val existing = if (allowResume && tmp.exists()) tmp.length() else 0L
+        val conn = openStream(id, urlStr, headers, existing)
+        try {
+            // 只有 206 说明服务端接受了续传；200 表示整包重来，必须丢掉旧分片
+            val resumed = existing > 0 && conn.responseCode == 206
+            if (existing > 0 && !resumed) tmp.delete()
+            val total = resolveTotal(conn, resumed, existing)
+            var loaded = if (resumed) existing else 0L
             var lastPost = 0L
             val buffer = ByteArray(64 * 1024)
+            // 续传时先回传一次，让前端进度条直接跳到已下载的位置
+            if (resumed) {
+                postProgress(id, loaded, total)
+                notifyProgress(id, safeName, loaded, total)
+            }
             conn.inputStream.use { input ->
-                FileOutputStream(tmp).use { out ->
+                FileOutputStream(tmp, resumed).use { out ->
                     while (true) {
                         if (cancelledIds.contains(id)) throw RuntimeException("已取消")
                         val len = input.read(buffer)
@@ -195,24 +273,44 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             if (cancelledIds.contains(id)) throw RuntimeException("已取消")
+            // 连接被静默截断时 read 直接返回 -1 而不抛异常，必须校验字节数，
+            // 否则会把半成品当完整文件发布到下载目录
+            if (total > 0 && loaded < total) throw RuntimeException("下载中断（$loaded/$total），可继续下载")
             postProgress(id, loaded, if (total > 0) total else loaded)
             val saved = publishToDownloads(safeName, tmp)
             postDone(id, saved)
             notifyDone(id, safeName, saved)
-        } catch (e: Exception) {
-            if (cancelledIds.contains(id)) {
-                postError(id, "已取消")
-                NotificationManagerCompat.from(this).cancel(id.hashCode())
-            } else {
-                postError(id, e.message ?: "下载失败")
-                notifyError(id, safeName, e.message ?: "下载失败")
-            }
         } finally {
-            activeConnections.remove(id)
-            cancelledIds.remove(id)
-            conn?.disconnect()
-            tmp?.delete()
+            conn.disconnect()
         }
+    }
+
+    /**
+     * 清理超过 7 天的下载分片：分片会在下载失败时保留供续传，
+     * 若用户再也没回来，这些半成品会一直占着 cacheDir。
+     */
+    private fun purgeStaleParts() {
+        val deadline = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        cacheDir.listFiles()?.forEach { f ->
+            if (f.isFile && f.name.startsWith("dl_") && f.name.endsWith(".tmp") && f.lastModified() < deadline) {
+                f.delete()
+            }
+        }
+    }
+
+    /** 解析本次下载的总字节数：续传（206）读 Content-Range，整包（200）读 Content-Length */
+    private fun resolveTotal(conn: HttpURLConnection, resumed: Boolean, existing: Long): Long {
+        if (resumed) {
+            val total = conn.getHeaderField("Content-Range")
+                ?.substringAfter("/", "")
+                ?.trim()
+                ?.takeIf { it != "*" }
+                ?.toLongOrNull()
+            if (total != null && total > 0) return total
+            val remaining = conn.contentLengthLong
+            return if (remaining > 0) existing + remaining else -1L
+        }
+        return conn.contentLengthLong.takeIf { it > 0 } ?: -1L
     }
 
     /** 保存到系统下载目录：Q+ 走 MediaStore（无需权限），低版本落到应用外部下载目录并由 FileProvider 暴露 */
@@ -435,6 +533,7 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.web_view)
 
         createNotificationChannel()
+        purgeStaleParts()
 
         // 通过 https 伪域名映射本地 assets，保证 ES Module 与 WebCrypto 安全上下文可用
         val assetLoader = WebViewAssetLoader.Builder()

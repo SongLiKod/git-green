@@ -49,7 +49,8 @@ service.interceptors.request.use(async config => {
 service.interceptors.response.use(
   res => {
     if ((res.config as any).__gated) release()
-    return { code: 200, msg: 'success', data: res.data } as any
+    // 带上响应头：blob 下载需要读 Content-Range/Content-Length 才能判断续传是否收齐
+    return { code: 200, msg: 'success', data: res.data, headers: res.headers } as any
   },
   async err => {
     if (err.config?.__gated) release()
@@ -95,6 +96,8 @@ export interface ApiResult<T = any> {
   code: number
   msg: string
   data?: T
+  /** 原始响应头（仅成功时返回；blob 下载用于读取 Content-Range 判断续传进度） */
+  headers?: Record<string, any>
 }
 
 /** PAT 认证头 */

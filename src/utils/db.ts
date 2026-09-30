@@ -7,8 +7,11 @@ import { decryptPAT } from './crypto'
 import { getEmailSettings, saveEmailSettings, type EmailSettings } from './emailService'
 
 const DB_NAME = 'gitgreen'
+const DB_VERSION = 3
 const STORE_LOGS = 'logs'
 const STORE_DOWNLOADS = 'downloads'
+/** 下载分片暂存（断点续传用，value 直接是 Blob） */
+const STORE_PARTS = 'parts'
 
 export interface OpLog {
   id: string
@@ -33,6 +36,14 @@ export interface DownloadRecord {
   size?: number
   /** 失败原因 */
   error?: string
+  /** 下载源地址（断点续传与「继续下载」需要） */
+  url?: string
+  /** 请求时使用的 Accept 头（Contents API 需 raw 媒体类型才能拿到字节） */
+  accept?: string
+  /** 发起下载的账号 id（继续下载时用来取 PAT） */
+  accountId?: string
+  /** 已下载字节数，续传时从这里接着拉 */
+  loaded?: number
 }
 
 export interface BackupPayload {
@@ -57,11 +68,13 @@ export interface BackupPayload {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2)
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE_LOGS)) db.createObjectStore(STORE_LOGS, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(STORE_DOWNLOADS)) db.createObjectStore(STORE_DOWNLOADS, { keyPath: 'id' })
+      // v3：断点续传分片，key=下载记录id，value=Blob
+      if (!db.objectStoreNames.contains(STORE_PARTS)) db.createObjectStore(STORE_PARTS)
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
@@ -172,16 +185,18 @@ export async function listDownloads(): Promise<DownloadRecord[]> {
 
 export async function clearDownloads(): Promise<void> {
   await idbClear(STORE_DOWNLOADS)
+  await clearParts()
 }
 
-/** 删除单条下载记录 */
+/** 删除单条下载记录（同时丢掉它的续传分片） */
 export async function removeDownload(id: string): Promise<void> {
   try {
     await openDb().then(
       db =>
         new Promise<void>((resolve, reject) => {
-          const tx = db.transaction(STORE_DOWNLOADS, 'readwrite')
+          const tx = db.transaction([STORE_DOWNLOADS, STORE_PARTS], 'readwrite')
           tx.objectStore(STORE_DOWNLOADS).delete(id)
+          tx.objectStore(STORE_PARTS).delete(id)
           tx.oncomplete = () => resolve()
           tx.onerror = () => reject(tx.error)
         })
@@ -189,6 +204,58 @@ export async function removeDownload(id: string): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+/* ---------------- 下载分片（断点续传） ---------------- */
+
+/** 暂存某次下载已拉到的字节，下次从该偏移继续 */
+export async function saveDownloadPart(id: string, part: Blob): Promise<void> {
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_PARTS, 'readwrite')
+      tx.objectStore(STORE_PARTS).put(part, id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {
+    /* 分片过大或 IndexedDB 不可用时忽略，续传降级为从头下载 */
+  }
+}
+
+/** 读取上次未完成的分片，没有则返回 null */
+export async function loadDownloadPart(id: string): Promise<Blob | null> {
+  try {
+    const db = await openDb()
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const req = db.transaction(STORE_PARTS, 'readonly').objectStore(STORE_PARTS).get(id)
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    })
+    return value instanceof Blob ? value : null
+  } catch {
+    return null
+  }
+}
+
+/** 丢弃分片（下载完成或用户放弃续传时调用） */
+export async function removeDownloadPart(id: string): Promise<void> {
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_PARTS, 'readwrite')
+      tx.objectStore(STORE_PARTS).delete(id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 清掉所有未完成分片（重置数据 / 放弃全部续传时使用） */
+async function clearParts(): Promise<void> {
+  await idbClear(STORE_PARTS)
 }
 
 /* ---------------- 备份 / 还原 ---------------- */

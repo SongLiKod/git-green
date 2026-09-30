@@ -20,6 +20,23 @@
 
 移动形态 UI（Vant）判定：Android 客户端 **或** 屏幕宽度 ≤768px；桌面形态 UI（Element Plus）用于其余情况。
 
+### 断点续传
+
+下载（Release 资产 / 单文件 / Action Artifact）统一走 `src/utils/downloader.ts` 的 `executeDownload`，新任务与「继续下载」共用同一段逻辑：
+
+| 端 | 实现 | 中断后能否接着下 |
+| --- | --- | --- |
+| Android 客户端 | 原生 `MainActivity.streamDownload` 按「下载地址+文件名」定位 `cacheDir/dl_<key>.tmp`，请求带 `Range`，服务端 `206` 追加写、`200` 覆盖重下、`416` 丢弃分片重下 | ✅ 跨任务、跨重启（成功或用户主动取消才清理分片；7 天未完成的分片自动清理） |
+| Windows 客户端 | `electron/main.cjs` 给 `api.github.com` 补 `Access-Control-Allow-Origin` 与预检 `Range` 白名单 → 前端 `api/resumable.ts` 用 `fetch` 分片拉取，分片暂存 IndexedDB `parts` store | ✅ 跨任务、跨重启 |
+| Web 开发环境 | vite 同源代理 `/gh-download`，不触发预检 | ✅ |
+| Web 生产环境 | GitHub 的 CORS 预检 `Access-Control-Allow-Headers` 白名单**不含 `Range`**（浏览器直接发会被预检拦掉），降级为整包下载 | ❌ 自动降级，仍保留进度、失败可一键重下 |
+
+下载记录（`DownloadRecord`）持久化 `url / accept / accountId / loaded`，因此 `/release`、`/download` 两个页面对中断的记录都会给出「继续下载 / 重新下载」按钮；`utils/db.ts` v3 新增 `parts` 分片 store，`clearDownloads` 会一并清理。
+
+进度与完整性：`resumable.ts` 用 `Content-Range` 解析总长，已知总长却提前 EOF 一律按「下载中断」处理并回传分片，避免把半成品当完整文件落盘。
+
+> 实测（GitHub REST API）：服务端完全支持 `Range`（`accept-ranges: bytes`、`206`、`416`、`Content-Range: bytes a-b/total`），且重定向到签名地址后 `Range` 依然生效；但**预检允许列表不含 `Range`**，`Accept: application/octet-stream` 的二进制响应也**不带 `Access-Control-Allow-Origin`**。前者只在 Electron 主进程补白名单即可，后者 Windows 端由 `onHeadersReceived` 一并补 `ACAO: *`；Web 生产端没有可注入的地方，故按上表降级。
+
 ## 二、功能清单
 
 | 路由 | 页面 | 主要功能 |
@@ -32,7 +49,7 @@
 | `/branch` | 分支管理 | 分支增删改、分支差异对比（文件级 diff + 提交记录，**支持跨仓库比较：base/head 各自选仓库与分支，可比上游与任意 fork**）、分支保护规则 |
 | `/commits` | 提交历史 | 提交列表、改动文件 diff、检索 |
 | `/action` | Action 流水线 | workflows、运行记录（含分支列）、手动触发（解析 workflow inputs）、取消/重跑/日志下载、仓库 Variables/Secrets 管理（RSA 公钥加密写入）、产物与 Check 状态 |
-| `/release` | Release 管理 | 列表/新建/编辑/删除，带进度与断点续传的资产下载 |
+| `/release` | Release 管理 | 列表/新建/编辑/删除，带进度与**断点续传**的资产下载（中断后可一键继续） |
 | `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、**单文件下载（Android 原生流式 / Web·Windows blob 落盘，记录进「下载」页）**、图片预览、**PDF 在线预览（pdf.js 按页渲染，超大 PDF 也能预览）**、`.md` 源码/渲染双视图 |
 | `/issue` | Issue 管理 | 列表（状态筛选、标签多选、最新关联提交列）、详情/评论、**Markdown 编辑器与渲染**、**仓库标签下拉管理（含 × 删除标签）** |
 | `/pull` | Pull Request | 列表（跨 Fork 时显示 `owner:branch`）、详情/评论（Markdown）、文件 diff、审核（RECOMMEND 自动寻找有写权限账号代审）、合并、关闭、**新建时可选「来源仓库」跨 fork 提 PR（深链 `/pull?headOwner=&headRepo=`）** |
@@ -95,7 +112,8 @@
 - `githubIssue.ts`：Issue、评论、时间线（关联提交）、仓库标签（列表/删除）、提交详情
 - `githubPullRequest.ts`：PR、文件、审核、合并、关闭
 - `githubAction.ts`：workflow/run/jobs/logs、仓库变量与密钥（RSA 密封）、产物、Check 注解
-- `githubRelease.ts`：Release 与**断点续传下载**（下载进度入库）
+- `githubRelease.ts`：Release 的增删改查与详情（资产下载已统一走 `resumable.ts`）
+- `resumable.ts`：**通用分片下载器**——带 `Range` 断点续传、`Content-Range` 解析总长、中断时把已收到字节打成分片交还调用方、完整性校验
 - `githubFile.ts`：Contents API 树/内容/原始 Base64/Blob 兜底、在线增改删
 - `githubSsh.ts`：SSH 公钥管理
 
