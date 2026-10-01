@@ -506,16 +506,17 @@ import {
   createOrUpdateSecret,
   deleteSecret,
   listRunArtifacts,
-  downloadArtifactBlob,
   listRunCheckRuns,
   listCheckRunAnnotations
 } from '@/api/githubAction'
 import type { Workflow, WorkflowRun, RunJob, RepoVariable, RepoSecret, RunArtifact, CheckRunAnnotation } from '@/api/githubAction'
-import { auth, type ApiResult } from '@/api/request'
+import { type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
 import { shortenPath } from '@/utils/file'
-import { blobDownload, startNativeDownload, saveNativeBlob } from '@/utils/platform'
+import { saveDownload } from '@/utils/db'
+import { executeDownload, saveBlob } from '@/utils/downloader'
+import { blobDownload, saveNativeBlob } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
 import RunStepsPanel from '@/components/RunStepsPanel.vue'
 import { useIsMobile } from '@/utils/platform'
@@ -1104,37 +1105,77 @@ function downloadErrorLog() {
   ElMessage.success('错误日志已下载')
 }
 
+/**
+ * 下载运行产物：与其它下载共用同一执行器，天然支持断点续传。
+ * 记录 id 固定为 artifact-{id}（不带时间戳），这样重试才能找回上次的分片。
+ */
 async function downloadArtifact(art: RunArtifact) {
   if (!ctx.value || downloading.value) return
   downloading.value = art.name
+  const recordId = `artifact-${art.id}`
+  const filename = `${art.name}.zip`
+  const accept = 'application/vnd.github+json'
+  const accountId = repoStore.currentAccountId
   try {
     const pat = await withPat()
-    // Android：软件内原生流式下载，进度由原生回传
-    if (
-      startNativeDownload(
-        `artifact-${art.id}-${Date.now()}`,
-        art.archive_download_url,
-        { ...auth(pat), Accept: 'application/vnd.github+json' },
-        `${art.name}.zip`,
-        {
-          onDone: saved => {
-            ElMessage.success(`已保存到 ${saved.path}`)
-            logStore.write({ module: 'action', action: '下载Artifact', detail: `${art.name} @ #${resultRun.value?.run_number || ''}` })
-          },
-          onError: msg => ElMessage.error(`下载失败：${msg}`)
+    if (!pat) return
+    saveDownload({
+      id: recordId,
+      filename,
+      percent: 0,
+      status: 'downloading',
+      url: art.archive_download_url,
+      accept,
+      accountId
+    })
+    await executeDownload(
+      { id: recordId, url: art.archive_download_url, filename, accept, accountId },
+      pat,
+      {
+        onDone: info => {
+          if (info.blob) saveBlob(info.blob, filename)
+          void saveDownload({
+            id: recordId,
+            filename,
+            percent: 100,
+            status: 'done',
+            path: info.path,
+            uri: info.uri,
+            size: info.total || undefined,
+            url: art.archive_download_url,
+            accept,
+            accountId
+          })
+          ElMessage.success(info.path ? `已保存到 ${info.path}` : `${filename} 下载完成`)
+          logStore.write({
+            module: 'action',
+            action: '下载Artifact',
+            detail: `${art.name} @ #${resultRun.value?.run_number || ''}`
+          })
+        },
+        onError: (msg, partial) => {
+          void saveDownload({
+            id: recordId,
+            filename,
+            percent:
+              partial && partial.total > 0
+                ? Math.min(99, Math.round((partial.loaded / partial.total) * 100))
+                : 0,
+            status: 'error',
+            size: partial?.total || undefined,
+            loaded: partial?.loaded,
+            error: msg,
+            url: art.archive_download_url,
+            accept,
+            accountId
+          })
+          ElMessage.error(`下载失败：${msg}`)
         }
-      )
-    ) {
-      ElMessage.success('已开始软件内下载')
-      return
-    }
-    const res = await downloadArtifactBlob(pat, art.archive_download_url)
-    if (res.code === 200 && res.data) {
-      blobDownload(res.data, `${art.name}.zip`)
-      logStore.write({ module: 'action', action: '下载Artifact', detail: `${art.name} @ #${resultRun.value?.run_number || ''}` })
-    } else {
-      ElMessage.error(`下载失败：${res.msg}`)
-    }
+      }
+    )
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err || '未知错误')
+    ElMessage.error(`下载失败：${msg}`)
   } finally {
     downloading.value = ''
   }

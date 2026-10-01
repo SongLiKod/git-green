@@ -87,6 +87,20 @@ export function isAndroidClient(): boolean {
   return getPlatform() === 'android'
 }
 
+/**
+ * 当前环境能否对 api.github.com 发 `Range` 分片请求（断点续传的前提）。
+ *
+ * GitHub 服务端支持 Range（206/416、accept-ranges: bytes），但其 CORS 预检的
+ * Access-Control-Allow-Headers 白名单里没有 Range —— 浏览器直接发会被预检拦掉。
+ * - Windows 客户端：electron/main.cjs 在 onHeadersReceived 里补了 Range 放行，可用
+ * - Web 开发环境：vite 同源代理 /gh-download，不触发预检，可用
+ * - Web 生产环境：无代理也无注入，只能降级为整包下载
+ */
+export function supportsRangeResume(): boolean {
+  if (getPlatform() === 'windows') return true
+  return !!import.meta.env.DEV
+}
+
 /** 响应式窄屏检测（≤768px 即移动形态） */
 const mediaQuery = window.matchMedia('(max-width: 768px)')
 const narrowScreen = ref(mediaQuery.matches)

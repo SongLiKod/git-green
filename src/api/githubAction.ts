@@ -410,21 +410,7 @@ export function listRunArtifacts(token: string, owner: string, repo: string, run
   }) as unknown as Promise<ApiResult<RunArtifactsResponse>>
 }
 
-/** 下载运行生成的 Artifact 压缩包（带 Token 全程不跳转） */
-export async function downloadArtifactBlob(token: string, url: string): Promise<ApiResult<Blob>> {
-  let reqUrl = url
-  if (import.meta.env.DEV && /^https:\/\/api\.github\.com/.test(url)) {
-    reqUrl = url.replace(/^https:\/\/api\.github\.com/, '/gh-download')
-  }
-  const res = (await service.get(reqUrl, {
-    baseURL: '',
-    responseType: 'blob',
-    timeout: 0,
-    maxRedirects: 10,
-    headers: { ...auth(token), Accept: 'application/vnd.github+json' }
-  })) as unknown as ApiResult<Blob>
-  return res
-}
+/** Artifact 与 Release 资产的下载已统一走 api/resumable.ts 的 downloadResumable（支持断点续传）。 */
 
 /** 某次运行的 Check Runs（产物下的检查结果容器） */
 export function listRunCheckRuns(

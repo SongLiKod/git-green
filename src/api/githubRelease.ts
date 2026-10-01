@@ -86,27 +86,4 @@ export function deleteRelease(token: string, owner: string, repo: string, id: nu
   }) as unknown as Promise<ApiResult>
 }
 
-/**
- * 软件内直接下载打包资源/二进制/安装包/源码包：
- * 通过 API 带 Token 拉取 blob，全程不跳转浏览器、不打开 GitHub 官网。
- * onProgress 回传下载进度，实现下载进度可视化。
- */
-export async function downloadWithProgress(
-  token: string,
-  url: string,
-  onProgress: (loaded: number, total: number) => void
-): Promise<ApiResult<Blob>> {
-  // Web开发环境：走vite代理并在代理端跟随302，规避 release-assets 域名无CORS头的问题
-  let reqUrl = url
-  if (import.meta.env.DEV && /^https:\/\/api\.github\.com/.test(url)) {
-    reqUrl = url.replace(/^https:\/\/api\.github\.com/, '/gh-download')
-  }
-  const res = (await service.get(reqUrl, {
-    baseURL: '',
-    responseType: 'blob',
-    timeout: 0,
-    headers: { ...auth(token), Accept: 'application/octet-stream' },
-    onDownloadProgress: e => onProgress(e.loaded, e.total || 0)
-  })) as unknown as ApiResult<Blob>
-  return res
-}
+// Release 资产下载已统一走 api/resumable.ts 的 downloadResumable（支持断点续传）。
