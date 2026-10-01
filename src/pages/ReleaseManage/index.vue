@@ -36,7 +36,10 @@
                 <div class="t">{{ t.filename }}</div>
                 <van-progress :percentage="t.percent" :status="t.status === 'error' ? 'exception' : t.percent >= 100 ? 'success' : ''" style="margin-top: 6px" />
                 <div v-if="t.status === 'done' && t.path" class="m-sub">已保存到 {{ t.path }}</div>
-                <div v-else-if="t.status === 'error' && t.error" class="m-sub">失败：{{ t.error }}</div>
+                <div v-else-if="t.status === 'error' && t.error" class="m-sub">
+                  失败：{{ t.error }}
+                  <template v-if="t.loaded && t.size">（已下载 {{ formatSize(t.loaded) }} / {{ formatSize(t.size) }}）</template>
+                </div>
               </div>
               <van-tag :type="t.status === 'done' ? 'success' : t.status === 'error' ? 'danger' : 'primary'">{{ taskStatusText(t) }}</van-tag>
             </div>
@@ -47,6 +50,12 @@
                 <van-button v-if="t.uri" size="mini" plain @click="shareTask(t)">分享</van-button>
                 <van-button v-if="isAndroid" size="mini" plain @click="openDir">下载目录</van-button>
               </template>
+              <van-button
+                v-else-if="t.status === 'error' && t.url"
+                size="mini"
+                type="primary"
+                @click="resumeTask(t)"
+              >{{ t.loaded ? '继续下载' : '重新下载' }}</van-button>
               <van-button size="mini" type="danger" plain @click="removeTask(t)">删除</van-button>
             </div>
           </div>
@@ -170,13 +179,16 @@
           <el-table-column label="状态" width="90">
             <template #default="{ row }">{{ taskStatusText(row) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="200">
+          <el-table-column label="操作" width="250">
             <template #default="{ row }">
               <template v-if="row.status === 'done'">
                 <el-button v-if="row.uri" link type="primary" @click="openTask(row)">打开</el-button>
                 <el-button v-if="row.uri && isTaskApk(row)" link type="success" @click="installTask(row)">安装</el-button>
                 <el-button v-if="row.uri" link @click="shareTask(row)">分享</el-button>
               </template>
+              <el-button v-else-if="row.status === 'error' && row.url" link type="primary" @click="resumeTask(row)">
+                {{ row.loaded ? '继续下载' : '重新下载' }}
+              </el-button>
               <el-button link type="danger" @click="removeTask(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -265,11 +277,8 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
 import * as releaseApi from '@/api/githubRelease'
 import type { Release, ReleaseAsset } from '@/api/githubRelease'
-import { auth } from '@/api/request'
 import QrDialog from '@/components/QrDialog.vue'
 import {
-  blobDownload,
-  startNativeDownload,
   cancelNativeDownload,
   useIsMobile,
   isAndroidClient,
@@ -277,12 +286,12 @@ import {
   installNativeApk,
   openNativeDownloadDir,
   shareNativeFile,
-  requestAndroidNotificationPermission,
   guessMimeByName,
   isApkFile,
   setNativeMessageHandler
 } from '@/utils/platform'
-import { saveDownload, listDownloads, removeDownload } from '@/utils/db'
+import { saveDownload, listDownloads, removeDownload, removeDownloadPart } from '@/utils/db'
+import { executeDownload, percentOf, saveBlob, isDownloadActive } from '@/utils/downloader'
 
 interface DownloadTask {
   id: string
@@ -297,6 +306,14 @@ interface DownloadTask {
   size?: number
   /** 失败原因 */
   error?: string
+  /** 下载源地址（续传与「继续下载」需要） */
+  url?: string
+  /** 请求时使用的 Accept 头（Contents API 需 raw 媒体类型） */
+  accept?: string
+  /** 发起下载的账号（继续下载时取 PAT） */
+  accountId?: string
+  /** 已下载字节数 */
+  loaded?: number
 }
 
 const accountStore = useAccountStore()
@@ -457,9 +474,10 @@ async function openDetail(row: Release) {
   detailVisible.value = true
 }
 
-/* ---------- 软件内下载闭环（含进度可视化 + Android原生断点续传） ---------- */
+/* ---------- 软件内下载闭环（进度可视化 + 断点续传：Android 原生分片 / Web·Windows Range 分片） ---------- */
 
-function formatSize(size: number): string {
+function formatSize(size?: number): string {
+  if (!size || size <= 0) return '-'
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(2)} MB`
@@ -471,12 +489,17 @@ function taskStatusText(t: DownloadTask) {
   return '下载中'
 }
 
+const aborters = new Map<string, AbortController>()
+
+/** 新建下载任务 */
 async function startDownload(url: string, filename: string, totalHint: number) {
   const pat = await withPat()
   if (!pat) return
-  const headers: Record<string, string> = { ...auth(pat), Accept: 'application/octet-stream' }
   const task = reactive<DownloadTask>({
     id: `dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    url,
+    accept: 'application/octet-stream',
+    accountId: repoStore.currentAccountId,
     filename,
     percent: 0,
     status: 'downloading',
@@ -484,54 +507,93 @@ async function startDownload(url: string, filename: string, totalHint: number) {
   })
   tasks.value.unshift(task)
   saveTask(task)
-  // Android 13+ 需运行时授权，否则下载完成弹不出系统通知
-  if (isAndroidClient()) requestAndroidNotificationPermission()
-  // Android：软件内原生流式下载，App 内显示真实进度，完成后保存到系统下载目录并发通知
-  if (
-    startNativeDownload(task.id, url, headers, filename, {
-      onProgress: (loaded, total) => {
-        task.percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : Math.min(99, Math.round((loaded / (totalHint || 1)) * 100))
+  await runDownload(task, pat)
+}
+
+/** 继续下载：复用同一个任务 id，原生/分片存储据此找回上次的半成品 */
+async function resumeTask(task: DownloadTask) {
+  if (!task.url || task.status === 'downloading') return
+  const pat = await withPat()
+  if (!pat) return
+  await runDownload(task, pat)
+}
+
+async function runDownload(task: DownloadTask, pat: string) {
+  if (!task.url) return
+  task.status = 'downloading'
+  task.error = undefined
+  saveTask(task)
+  // 下载期间任务可能被用户删除（取消），回调据此决定是否回写
+  const alive = () => tasks.value.some(t => t.id === task.id)
+  // Web/Windows 下载可取消：控制器挂在任务 id 上，removeTask 时 abort
+  const controller = new AbortController()
+  aborters.set(task.id, controller)
+
+  await executeDownload(
+    {
+      id: task.id,
+      url: task.url,
+      filename: task.filename,
+      accept: task.accept,
+      size: task.size,
+      accountId: task.accountId,
+      signal: controller.signal
+    },
+    pat,
+    {
+      onProgress: (loaded, _total, percent) => {
+        task.loaded = loaded
+        task.percent = percent
       },
-      onDone: saved => {
+      onDone: info => {
+        if (!alive()) return
+        if (info.blob) {
+          saveBlob(info.blob, task.filename)
+          task.path = '浏览器默认下载目录'
+        } else if (info.path) {
+          task.path = info.path
+          task.uri = info.uri
+        }
         task.percent = 100
         task.status = 'done'
-        task.path = saved.path
-        task.uri = saved.uri
         saveTask(task)
-        showDone(task)
-        ElMessage.success(`${filename} 下载完成，已保存到 ${saved.path}`)
-        logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成（软件内，保存到 ${saved.path}）`, level: 'success' })
+        if (info.path) showDone(task)
+        ElMessage.success(
+          info.path ? `${task.filename} 下载完成，已保存到 ${info.path}` : `${task.filename} 下载完成（全程软件内闭环）`
+        )
+        logStore.write({
+          module: 'release',
+          action: '下载资源',
+          detail: info.path
+            ? `${task.filename} 下载完成（软件内，保存到 ${info.path}）`
+            : `${task.filename} 下载完成`,
+          level: 'success'
+        })
       },
-      onError: msg => {
+      onError: (msg, partial) => {
+        if (!alive()) {
+          // 任务已删除：把执行器刚存下的分片一并清掉，避免留下孤儿数据
+          void removeDownloadPart(task.id)
+          return
+        }
+        if (partial) {
+          task.loaded = partial.loaded
+          task.percent = percentOf(partial.loaded, partial.total, task.size)
+        }
         task.status = 'error'
         task.error = msg
         saveTask(task)
         ElMessage.error(`下载失败：${msg}`)
-        logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载失败：${msg}`, level: 'error' })
+        logStore.write({
+          module: 'release',
+          action: '下载资源',
+          detail: `${task.filename} 下载失败：${msg}`,
+          level: 'error'
+        })
       }
-    })
-  ) {
-    ElMessage.success('已开始软件内下载，完成后可在下载任务中直接打开')
-    return
-  }
-  // Web/Windows：blob 流式下载，进度可视化
-  const res = await releaseApi.downloadWithProgress(pat, url, (loaded, total) => {
-    task.percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : Math.min(99, Math.round((loaded / (totalHint || 1)) * 100))
-  })
-  if (res.code === 200 && res.data) {
-    blobDownload(res.data, filename)
-    task.percent = 100
-    task.status = 'done'
-    task.path = '浏览器默认下载目录'
-    ElMessage.success(`${filename} 下载完成（全程软件内闭环）`)
-    logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载完成`, level: 'success' })
-  } else {
-    task.status = 'error'
-    task.error = res.msg
-    ElMessage.error(`下载失败：${res.msg}`)
-    logStore.write({ module: 'release', action: '下载资源', detail: `${filename} 下载失败：${res.msg}`, level: 'error' })
-  }
-  saveTask(task)
+    }
+  )
+  aborters.delete(task.id)
 }
 
 /* ---------- 下载结果的打开 / 安装 / 分享 ---------- */
@@ -596,18 +658,30 @@ function saveTask(task: DownloadTask) {
     path: task.path,
     uri: task.uri,
     size: task.size,
-    error: task.error
+    error: task.error,
+    url: task.url,
+    accept: task.accept,
+    accountId: task.accountId,
+    loaded: task.loaded
   })
 }
 
 async function loadTasks() {
+  // 刷新/重启后遗留的「下载中」按中断处理（本会话仍在跑的不动），带 url 的可一键继续
   tasks.value = (await listDownloads()).map(t =>
-    t.status === 'downloading' ? { ...t, status: 'error' as const, error: t.error || '已中断' } : { ...t }
+    t.status === 'downloading' && !isDownloadActive(t.id)
+      ? { ...t, status: 'error' as const, error: t.error || (t.url ? '已中断，可继续下载' : '已中断') }
+      : { ...t }
   )
 }
 
 async function removeTask(t: DownloadTask) {
-  if (t.status === 'downloading') cancelNativeDownload(t.id)
+  if (t.status === 'downloading') {
+    cancelNativeDownload(t.id)
+    // Web/Windows 正在进行的分片下载：中止请求并丢弃分片
+    aborters.get(t.id)?.abort()
+    aborters.delete(t.id)
+  }
   tasks.value = tasks.value.filter(x => x.id !== t.id)
   await removeDownload(t.id)
   ElMessage.success('下载任务已删除')

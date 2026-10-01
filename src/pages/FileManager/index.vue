@@ -226,10 +226,10 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useLogStore } from '@/stores/useLogStore'
 import { getFileTree, getFileContent, getFileRaw, getFileRawBytes, contentsRawUrl, saveFile, deleteFile } from '@/api/githubFile'
 import type { FileEntry } from '@/api/githubFile'
-import { auth } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { saveDownload } from '@/utils/db'
-import { blobDownload, isAndroidClient, requestAndroidNotificationPermission, startNativeDownload, useIsMobile } from '@/utils/platform'
+import { useIsMobile } from '@/utils/platform'
+import { executeDownload, saveBlob } from '@/utils/downloader'
 import { formatBytes, isPdfFile, shortenPath } from '@/utils/file'
 import MdRender from '@/components/MdRender.vue'
 
@@ -410,8 +410,8 @@ function markDownloading(path: string, active: boolean) {
 
 /**
  * 下载单个远程文件到本地：
- * 1) Android 客户端交给原生流式下载（保存到系统下载目录并弹通知）
- * 2) Web/Windows 走 api.github.com 的 raw 媒体类型拉取字节，浏览器内落盘
+ * 1) Android 客户端交给原生流式下载（保存到系统下载目录并弹通知，按「地址+文件名」断点续传）
+ * 2) Web/Windows 带 Range 分片拉取，中断后分片存 IndexedDB，可从「下载」页继续
  * 全程不跳转 GitHub 页面，下载记录写入「下载」页。
  */
 async function downloadFile(path: string, size = 0, refVal = branch.value) {
@@ -422,59 +422,69 @@ async function downloadFile(path: string, size = 0, refVal = branch.value) {
   const filename = path.split('/').pop() || path
   const recordId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const detail = `${c.owner}/${c.repo}:${targetRef} ${path}`
+  // 统一走 api.github.com（带 Token 支持私有仓库/大文件，且预检允许 Authorization，不会被浏览器拦成网络错误）
+  const sourceUrl = contentsRawUrl(c.owner, c.repo, path, targetRef)
+  const accept = 'application/vnd.github.raw'
+  const accountId = repoStore.currentAccountId
   markDownloading(path, true)
-  let handedToNative = false
   try {
     const pat = await withPat()
-    if (!pat) return
-    // 统一走 api.github.com（带 Token 支持私有仓库/大文件，且预检允许 Authorization，不会被浏览器拦成网络错误）
-    const headers = { ...auth(pat), Accept: 'application/vnd.github.raw' }
-    saveDownload({ id: recordId, filename, percent: 0, status: 'downloading', size })
-    if (isAndroidClient()) requestAndroidNotificationPermission()
-    handedToNative = startNativeDownload(
-      recordId,
-      contentsRawUrl(c.owner, c.repo, path, targetRef),
-      headers,
-      filename,
-      {
-        onDone: saved => {
-          markDownloading(path, false)
-          saveDownload({ id: recordId, filename, percent: 100, status: 'done', size, path: saved.path, uri: saved.uri })
-          ElMessage.success(`${filename} 已保存到 ${saved.path}`)
-          logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 已保存到 ${saved.path}`, level: 'success' })
-        },
-        onError: msg => {
-          markDownloading(path, false)
-          saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: msg })
-          ElMessage.error(`下载失败：${msg}`)
-          logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${msg}`, level: 'error' })
-        }
-      }
-    )
-    if (handedToNative) {
-      ElMessage.success('已开始软件内下载，完成后可在「下载」页打开')
+    if (!pat) {
+      markDownloading(path, false)
       return
     }
-    const res = await getFileRawBytes(pat, c.owner, c.repo, path, targetRef)
-    if (res.code === 200 && res.data) {
-      const fileSize = size || res.data.size
-      blobDownload(res.data, filename)
-      saveDownload({ id: recordId, filename, percent: 100, status: 'done', size: fileSize })
-      ElMessage.success(`${filename} 下载完成`)
-      logStore.write({ module: 'file', action: '下载文件', detail, level: 'success' })
-    } else {
-      saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: res.msg })
-      ElMessage.error(`下载失败：${res.msg}`)
-      logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${res.msg}`, level: 'error' })
-    }
+    // 记录里带上 url/accept/accountId，「下载」页据此一键继续
+    saveDownload({ id: recordId, filename, percent: 0, status: 'downloading', size, url: sourceUrl, accept, accountId })
+
+    await executeDownload({ id: recordId, url: sourceUrl, filename, accept, size, accountId }, pat, {
+      onDone: info => {
+        markDownloading(path, false)
+        if (info.blob) {
+          saveBlob(info.blob, filename)
+          saveDownload({ id: recordId, filename, percent: 100, status: 'done', size: info.total || size, url: sourceUrl, accept, accountId })
+          ElMessage.success(`${filename} 下载完成`)
+          logStore.write({ module: 'file', action: '下载文件', detail, level: 'success' })
+          return
+        }
+        saveDownload({
+          id: recordId,
+          filename,
+          percent: 100,
+          status: 'done',
+          size,
+          path: info.path,
+          uri: info.uri,
+          url: sourceUrl,
+          accept,
+          accountId
+        })
+        ElMessage.success(`${filename} 已保存到 ${info.path}`)
+        logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 已保存到 ${info.path}`, level: 'success' })
+      },
+      onError: (msg, partial) => {
+        markDownloading(path, false)
+        saveDownload({
+          id: recordId,
+          filename,
+          percent: partial ? Math.min(99, Math.round(((partial.loaded || 0) / (partial.total || size || 1)) * 100)) : 0,
+          status: 'error',
+          size: partial?.total || size,
+          error: msg,
+          url: sourceUrl,
+          accept,
+          accountId,
+          loaded: partial?.loaded
+        })
+        ElMessage.error(`下载失败：${msg}`)
+        logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${msg}`, level: 'error' })
+      }
+    })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err || '未知错误')
-    saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: msg })
+    markDownloading(path, false)
+    saveDownload({ id: recordId, filename, percent: 0, status: 'error', size, error: msg, url: sourceUrl, accept, accountId })
     ElMessage.error(`下载失败：${msg}`)
     logStore.write({ module: 'file', action: '下载文件', detail: `${detail} 下载失败：${msg}`, level: 'error' })
-  } finally {
-    // 原生下载是异步的，loading 由 onDone/onError 收尾
-    if (!handedToNative) markDownloading(path, false)
   }
 }
 

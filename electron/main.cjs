@@ -95,12 +95,16 @@ function createWindow() {
 
 app.whenReady().then(() => {
   // Windows客户端「无跨域限制」：为GitHub资产下载跳转域名注入CORS响应头
-  // 注意：目标域若已自带 Access-Control-Allow-Origin（如 Actions 日志所在的
-  // *.blob.core.windows.net 存储会返回自身的 "*"），则禁止再注入，
-  // 否则 Electron 会与原有响应头合并成多值 "*, *"，触发 CORS 拦截。
+  // 注意：
+  //  1) 目标域若已自带 Access-Control-Allow-Origin（如 Actions 日志所在的
+  //     *.blob.core.windows.net 存储会返回自身的 "*"），则禁止再注入，
+  //     否则 Electron 会与原有响应头合并成多值 "*, *"，触发 CORS 拦截。
+  //  2) api.github.com 的二进制下载响应（octet-stream / Range 206）不带任何 CORS 头，
+  //     预检白名单里也没有 Range；这里补 ACAO 与 Range，Windows 客户端才能正常下载并断点续传。
   session.defaultSession.webRequest.onHeadersReceived(
     {
       urls: [
+        'https://api.github.com/*',
         'https://release-assets.githubusercontent.com/*',
         'https://objects.githubusercontent.com/*',
         'https://codeload.github.com/*',
@@ -111,7 +115,37 @@ app.whenReady().then(() => {
     (details, callback) => {
       const headers = details.responseHeaders || {}
       const merged = { ...headers }
-      const hasCorsOrigin = Object.keys(merged).some(k => k.toLowerCase() === 'access-control-allow-origin')
+      const findHeader = name =>
+        Object.keys(merged).find(k => k.toLowerCase() === name.toLowerCase())
+
+      // --- GitHub API：预检白名单补 Range，响应补 ACAO，Windows 客户端才能分片断点续传 ---
+      if (details.url.startsWith('https://api.github.com/')) {
+        // 1) GitHub 对二进制下载响应（application/octet-stream / Range 206）不返回
+        //    Access-Control-Allow-Origin，浏览器会直接判为跨域失败，这里补上
+        if (!findHeader('access-control-allow-origin')) {
+          merged['access-control-allow-origin'] = ['*']
+        }
+        // 2) 预检的 Access-Control-Allow-Headers 白名单不含 Range，补进去才能发分片请求
+        const allowKey = findHeader('access-control-allow-headers')
+        const raw = allowKey ? merged[allowKey] : undefined
+        const existing = Array.isArray(raw) ? raw.join(', ') : String(raw || '')
+        const missing = ['Range', 'If-Range'].filter(
+          h => !new RegExp(`(^|,)\\s*${h}\\s*(,|$)`, 'i').test(existing)
+        )
+        if (missing.length > 0) {
+          const value = missing.reduce((acc, h) => (acc ? `${acc}, ${h}` : h), existing)
+          // 缺白名单时必须带上 Authorization，否则会把原本放行的带 Token 请求一起挡掉
+          if (allowKey) merged[allowKey] = [value]
+          else merged['access-control-allow-headers'] = [`Authorization, ${value}`]
+        }
+        return callback({ responseHeaders: merged })
+      }
+
+      // --- 资产域：沿用原有注入逻辑 ---
+      // 目标域若已自带 Access-Control-Allow-Origin（如 Actions 日志所在的
+      // *.blob.core.windows.net 存储会返回自身的 "*"），则禁止再注入，
+      // 否则 Electron 会与原有响应头合并成多值 "*, *"，触发 CORS 拦截。
+      const hasCorsOrigin = findHeader('access-control-allow-origin')
       if (hasCorsOrigin) {
         return callback({ responseHeaders: merged })
       }
