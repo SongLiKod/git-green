@@ -40,12 +40,19 @@
               <div class="m-card-title">
                 <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
                 <div class="m-sub">{{ r.head_branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
+                <div v-if="r.status !== 'completed' && runProgress[r.id]" class="m-sub m-prog">
+                  <span class="m-prog-bar"><i :style="{ width: progPct(runProgress[r.id]) + '%' }" /></span>
+                  <span class="m-prog-txt">
+                    {{ runProgress[r.id].done }}/{{ runProgress[r.id].total }} 步<template v-if="runProgress[r.id].step"> · {{ runProgress[r.id].step }}</template>
+                  </span>
+                </div>
               </div>
               <van-tag :type="r.status !== 'completed' ? 'warning' : r.conclusion === 'success' ? 'success' : r.conclusion === 'cancelled' ? 'default' : 'danger'">
                 {{ runText(r) }}
               </van-tag>
             </div>
             <div class="m-actions">
+              <van-button size="mini" type="primary" plain @click="openSteps(r)">进度</van-button>
               <van-button size="mini" type="primary" plain @click="openLogs(r)">日志</van-button>
               <van-button size="mini" type="primary" plain @click="openRunResult(r)">产物/结果</van-button>
               <van-button v-if="r.status !== 'completed'" size="mini" type="warning" plain @click="cancel(r)">取消</van-button>
@@ -138,8 +145,30 @@
         <van-popup v-model:show="logsVisible" position="bottom" round :style="{ height: '86%' }">
           <div class="m-popup">
             <div class="m-popup-title">运行日志 #{{ logsRun?.run_number || '' }}</div>
+            <div class="logs-now" :class="{ 'is-done': !logsRunning }">
+              <span class="logs-now-dot" />
+              <span class="logs-now-label">{{ logsRunning ? '当前步骤' : '状态' }}</span>
+              <span class="logs-now-val">{{ logsCurrent || (logsRunning ? '等待步骤开始…' : '运行已结束') }}</span>
+            </div>
             <pre class="m-logs">{{ logsText || '等待日志输出...' }}</pre>
             <div class="m-actions"><van-button block @click="closeLogs">关闭</van-button></div>
+          </div>
+        </van-popup>
+
+        <van-popup v-model:show="stepsVisible" position="bottom" round :style="{ height: '86%' }">
+          <div class="m-popup">
+            <div class="m-popup-title">执行进度 #{{ stepsRun?.run_number || '' }}</div>
+            <div class="steps-head">
+              <van-tag :type="stepsRun && stepsRun.status !== 'completed' ? 'warning' : stepsRun?.conclusion === 'success' ? 'success' : 'danger'" size="medium">
+                {{ stepsRun ? runText(stepsRun) : '' }}
+              </van-tag>
+              <span class="steps-head-sub">{{ stepsRun?.head_branch || '' }} · {{ stepsRun?.event || '' }}</span>
+            </div>
+            <div class="steps-live" :class="{ 'is-done': !stepsLive }">
+              {{ stepsLive ? '运行中，每 3 秒自动刷新' : '已结束' }}
+            </div>
+            <RunStepsPanel :jobs="stepsJobs" :loading="stepsLoading" />
+            <div class="m-actions"><van-button block @click="stepsVisible = false">关闭</van-button></div>
           </div>
         </van-popup>
 
@@ -242,16 +271,24 @@
             </el-table-column>
             <el-table-column prop="head_branch" label="分支" width="140" />
             <el-table-column prop="event" label="触发方式" width="130" />
-            <el-table-column label="状态" width="110">
+            <el-table-column label="状态" width="190">
               <template #default="{ row }">
                 <el-tag size="small" :type="runTagType(row)">{{ runText(row) }}</el-tag>
+                <div v-if="row.status !== 'completed' && runProgress[row.id]" class="run-prog">
+                  <div class="run-prog-bar"><i :style="{ width: progPct(runProgress[row.id]) + '%' }" /></div>
+                  <div class="run-prog-txt" :title="runProgress[row.id].step">
+                    <span>{{ runProgress[row.id].done }}/{{ runProgress[row.id].total }} 步</span>
+                    <em v-if="runProgress[row.id].step">{{ runProgress[row.id].step }}</em>
+                  </div>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="开始时间" width="170">
               <template #default="{ row }">{{ new Date(row.created_at).toLocaleString() }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="280">
+            <el-table-column label="操作" width="330">
               <template #default="{ row }">
+                <el-button link type="primary" @click="openSteps(row)">进度</el-button>
                 <el-button link type="primary" @click="openLogs(row)">日志</el-button>
                 <el-button link type="primary" @click="openRunResult(row)">产物/结果</el-button>
                 <el-button v-if="row.status !== 'completed'" link type="warning" @click="cancel(row)">取消</el-button>
@@ -345,10 +382,36 @@
     </el-dialog>
 
     <el-dialog v-model="logsVisible" :title="`运行日志 #${logsRun?.run_number || ''}（实时流式）`" width="820px" top="4vh">
+      <div class="logs-now" :class="{ 'is-done': !logsRunning }">
+        <span class="logs-now-dot" />
+        <span class="logs-now-label">{{ logsRunning ? '当前步骤' : '状态' }}</span>
+        <span class="logs-now-val">{{ logsCurrent || (logsRunning ? '等待步骤开始…' : '运行已结束') }}</span>
+      </div>
       <pre ref="logsRef" class="logs-box">{{ logsText || '等待日志输出...' }}</pre>
       <template #footer>
         <el-tag v-if="logsRunning" type="warning">运行中，每3秒自动刷新...</el-tag>
         <el-button @click="closeLogs">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="stepsVisible"
+      :title="`执行进度（运行 #${stepsRun?.run_number || ''}）`"
+      width="760px"
+      top="6vh"
+      class="steps-dialog"
+    >
+      <div class="steps-head">
+        <el-tag size="small" :type="stepsRun ? runTagType(stepsRun) : 'info'">{{ stepsRun ? runText(stepsRun) : '' }}</el-tag>
+        <span class="steps-head-sub">{{ stepsRun?.display_title || stepsRun?.name || '' }} · {{ stepsRun?.head_branch || '' }} · {{ stepsRun?.event || '' }}</span>
+      </div>
+      <div class="steps-scroll">
+        <RunStepsPanel :jobs="stepsJobs" :loading="stepsLoading" />
+      </div>
+      <template #footer>
+        <el-tag v-if="stepsLive" type="warning">运行中，每 3 秒自动刷新…</el-tag>
+        <el-tag v-else type="success">已结束</el-tag>
+        <el-button @click="stepsVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -446,7 +509,7 @@ import {
   listRunCheckRuns,
   listCheckRunAnnotations
 } from '@/api/githubAction'
-import type { Workflow, WorkflowRun, RepoVariable, RepoSecret, RunArtifact, CheckRunAnnotation } from '@/api/githubAction'
+import type { Workflow, WorkflowRun, RunJob, RepoVariable, RepoSecret, RunArtifact, CheckRunAnnotation } from '@/api/githubAction'
 import { type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
@@ -455,6 +518,7 @@ import { saveDownload } from '@/utils/db'
 import { executeDownload, saveBlob } from '@/utils/downloader'
 import { blobDownload, saveNativeBlob } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
+import RunStepsPanel from '@/components/RunStepsPanel.vue'
 import { useIsMobile } from '@/utils/platform'
 
 const accountStore = useAccountStore()
@@ -680,6 +744,17 @@ const logsRef = ref<HTMLElement>()
 let logsTimer: number | undefined
 let refreshTimer: number | undefined
 
+/** 日志面板顶部“当前执行到哪一步”（由日志轮询顺带回传的 Job/步骤实时推导） */
+const logsJobs = ref<RunJob[]>([])
+const logsCurrent = computed(() => {
+  for (const job of logsJobs.value) {
+    const s = (job.steps || []).find(x => x.status === 'in_progress')
+    if (s) return `${job.name} › ${s.name}`
+    if (job.status === 'in_progress') return `${job.name} › 准备中`
+  }
+  return ''
+})
+
 async function withPat() {
   return await accountStore.getPat(repoStore.currentAccountId)
 }
@@ -702,8 +777,59 @@ async function loadRuns() {
   const pat = await withPat()
   const res = await listRuns(pat, ctx.value.owner, ctx.value.repo, runFilterWorkflow.value)
   runsLoading.value = false
-  if (res.code === 200) runs.value = res.data?.workflow_runs || []
-  else ElMessage.error(`运行记录加载失败：${res.msg}`)
+  if (res.code === 200) {
+    runs.value = res.data?.workflow_runs || []
+    maybeLoadRunProgress()
+  } else ElMessage.error(`运行记录加载失败：${res.msg}`)
+}
+
+/* ---------- 列表内联步骤进度：仅对运行中的 Run 拉 Job/步骤（节流，避免限流） ---------- */
+type RunProgress = { done: number; total: number; step: string }
+const runProgress = ref<Record<number, RunProgress>>({})
+let progressSeq = 0
+let lastProgressAt = 0
+
+function progPct(p: RunProgress) {
+  return p.total ? Math.round((p.done / p.total) * 100) : 0
+}
+
+function maybeLoadRunProgress() {
+  const now = Date.now()
+  if (now - lastProgressAt < 5000) return
+  lastProgressAt = now
+  loadRunProgress()
+}
+
+async function loadRunProgress() {
+  const seq = ++progressSeq
+  const c = ctx.value
+  const pending = runs.value.filter(r => r.status !== 'completed').slice(0, 3)
+  const next: Record<number, RunProgress> = {}
+  if (!c || !pending.length) {
+    runProgress.value = next
+    return
+  }
+  const pat = await withPat()
+  await Promise.all(
+    pending.map(async r => {
+      const res = await listRunJobs(pat, c.owner, c.repo, r.id)
+      if (res.code !== 200 || !res.data) return
+      let done = 0
+      let total = 0
+      let step = ''
+      for (const job of res.data.jobs || []) {
+        for (const s of job.steps || []) {
+          total++
+          if (s.status === 'completed') done++
+          if (!step && s.status === 'in_progress') step = `${job.name} › ${s.name}`
+        }
+        if (!step && job.status === 'in_progress') step = `${job.name} › 准备中`
+      }
+      next[r.id] = { done, total, step }
+    })
+  )
+  if (seq !== progressSeq) return
+  runProgress.value = next
 }
 
 function runTagType(row: WorkflowRun) {
@@ -831,8 +957,8 @@ async function loadRunResult() {
   annotations.value = anns
   if (runFailed.value) {
     const logsRes = await getRunLogs(pat, ctx.value.owner, ctx.value.repo, row.id)
-    if (logsRes.code === 200 && logsRes.data) {
-      const steps = extractFailSteps(logsRes.data)
+    if (logsRes.code === 200 && logsRes.data?.text) {
+      const steps = extractFailSteps(logsRes.data.text)
       runErrors.value = steps
         .map(s => (s.job ? `===== ${s.job} =====\n` : '') + errorDisplaySlice(s.raw.split('\n').map(l => l.replace(TS_RE, ''))))
         .join('\n\n')
@@ -1091,10 +1217,11 @@ async function rerun(row: WorkflowRun) {
   }
 }
 
-/* 实时流式日志：轮询拉取合并 Job 日志 */
+/* 实时流式日志：轮询拉取合并 Job 日志（同时带回 Job/步骤，用于顶部“当前步骤”） */
 async function openLogs(row: WorkflowRun) {
   logsRun.value = row
   logsText.value = ''
+  logsJobs.value = []
   logsVisible.value = true
   logsRunning.value = true
   await pullLogs()
@@ -1105,8 +1232,9 @@ async function pullLogs() {
   if (!ctx.value || !logsRun.value) return
   const pat = await withPat()
   const res = await getRunLogs(pat, ctx.value.owner, ctx.value.repo, logsRun.value.id)
-  if (res.code === 200) {
-    logsText.value = res.data || ''
+  if (res.code === 200 && res.data) {
+    logsText.value = res.data.text || ''
+    logsJobs.value = res.data.jobs || []
     nextTick(() => {
       if (logsRef.value) logsRef.value.scrollTop = logsRef.value.scrollHeight
     })
@@ -1127,11 +1255,71 @@ async function pullLogs() {
 
 function closeLogs() {
   logsVisible.value = false
+  logsJobs.value = []
   if (logsTimer) {
     window.clearInterval(logsTimer)
     logsTimer = undefined
   }
 }
+
+/* ---------- 执行进度（GitHub Actions 风格 Job/步骤面板，3 秒实时轮询） ---------- */
+const stepsVisible = ref(false)
+const stepsRun = ref<WorkflowRun | null>(null)
+const stepsJobs = ref<RunJob[]>([])
+const stepsLoading = ref(false)
+let stepsPulling = false
+let stepsTimer: number | undefined
+
+const stepsLive = computed(() => !!stepsRun.value && stepsRun.value.status !== 'completed')
+
+async function openSteps(row: WorkflowRun) {
+  stepsRun.value = row
+  stepsJobs.value = []
+  stepsLoading.value = true
+  stepsVisible.value = true
+  stopStepsTimer()
+  await pullSteps()
+  stepsLoading.value = false
+  if (stepsLive.value) stepsTimer = window.setInterval(pullSteps, 3000)
+}
+
+async function pullSteps() {
+  if (!ctx.value || !stepsRun.value || stepsPulling) return
+  stepsPulling = true
+  const runId = stepsRun.value.id
+  const pat = await withPat()
+  try {
+    const [jr, rr] = await Promise.all([
+      listRunJobs(pat, ctx.value.owner, ctx.value.repo, runId),
+      getWorkflowRun(pat, ctx.value.owner, ctx.value.repo, runId)
+    ])
+    if (jr.code === 200 && jr.data) stepsJobs.value = jr.data.jobs || []
+    if (rr.code === 200 && rr.data) {
+      stepsRun.value = rr.data
+      // 同步列表行状态与内联进度
+      const i = runs.value.findIndex(r => r.id === rr.data!.id)
+      if (i >= 0) runs.value[i] = rr.data
+      if (rr.data.status === 'completed') {
+        delete runProgress.value[rr.data.id]
+        stopStepsTimer()
+      }
+    }
+  } finally {
+    stepsPulling = false
+  }
+}
+
+function stopStepsTimer() {
+  if (stepsTimer) {
+    window.clearInterval(stepsTimer)
+    stepsTimer = undefined
+  }
+}
+
+// 关闭进度面板（按钮 / 弹层关闭）时停止轮询，面板数据留待下次打开时重置
+watch(stepsVisible, v => {
+  if (!v) stopStepsTimer()
+})
 
 /* 在线编辑 Workflow yml */
 async function openEditor(w: Workflow) {
@@ -1185,6 +1373,8 @@ watch(autoRefresh, v => {
 })
 
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], () => {
+  runProgress.value = {}
+  lastProgressAt = 0
   loadWorkflows()
   loadRuns()
   if (tab.value === 'vars') loadVars()
@@ -1207,8 +1397,11 @@ async function handleRunQuery() {
   const c = ctx.value
   const pat = await withPat()
   const res = await getWorkflowRun(pat, c.owner, c.repo, n)
-  if (res.code === 200 && res.data) openRunResult(res.data)
-  else ElMessage.error(`运行记录获取失败：${res.msg}`)
+  if (res.code === 200 && res.data) {
+    // 运行中 → 进度面板（看执行到哪一步）；已结束 → 产物 / 异常结果
+    if (res.data.status !== 'completed') openSteps(res.data)
+    else openRunResult(res.data)
+  } else ElMessage.error(`运行记录获取失败：${res.msg}`)
 }
 watch(() => route.query.run, handleRunQuery)
 onMounted(() => {
@@ -1218,6 +1411,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   closeLogs()
+  stopStepsTimer()
   if (refreshTimer) window.clearInterval(refreshTimer)
 })
 </script>
@@ -1297,5 +1491,142 @@ onBeforeUnmount(() => {
   font-family: Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
+}
+/* 运行列表内联步骤进度 */
+.run-prog {
+  margin-top: 6px;
+}
+.run-prog-bar,
+.m-prog-bar {
+  height: 4px;
+  background: var(--bg-page);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.run-prog-bar i,
+.m-prog-bar i {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.4s ease;
+}
+.run-prog-txt {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-secondary);
+}
+.run-prog-txt span {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.run-prog-txt em {
+  font-style: normal;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-prog {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-primary);
+}
+.m-prog-bar {
+  flex: none;
+  width: 52px;
+}
+.m-prog-txt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 日志面板顶部“当前步骤”实时提示 */
+.logs-now {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(0, 148, 88, 0.1);
+  border: 1px solid rgba(0, 148, 88, 0.35);
+}
+.logs-now.is-done {
+  background: var(--bg-page);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+.logs-now-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: logs-pulse 1s ease-in-out infinite alternate;
+}
+.logs-now.is-done .logs-now-dot {
+  background: var(--text-secondary);
+  animation: none;
+}
+.logs-now-label {
+  flex: none;
+  color: var(--text-secondary);
+}
+.logs-now-val {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes logs-pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* 移动端日志弹层：给“当前步骤”让出高度 */
+.m-logs {
+  height: 52vh;
+}
+/* 执行进度面板外框 */
+.el-dialog__footer .el-tag {
+  margin-right: 8px;
+}
+.steps-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.steps-head-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.steps-live {
+  font-size: 12px;
+  color: var(--color-primary);
+  margin-bottom: 8px;
+}
+.steps-live.is-done {
+  color: var(--text-secondary);
+}
+.steps-scroll {
+  max-height: 56vh;
+  overflow: auto;
+  padding-right: 4px;
 }
 </style>

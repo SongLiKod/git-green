@@ -48,7 +48,7 @@
 | `/forks` | Fork 管理 | 当前仓库的 Fork 网络列表（排序：最新/最早/Star/Watch）、Fork 标签（我的/公开私有）、接入或进入、克隆（HTTPS/SSH + 二维码）、复制、删除自己账号下的 Fork（二次确认 + 写日志）、分页加载更多 |
 | `/branch` | 分支管理 | 分支增删改、分支差异对比（文件级 diff + 提交记录，**支持跨仓库比较：base/head 各自选仓库与分支，可比上游与任意 fork**）、分支保护规则 |
 | `/commits` | 提交历史 | 提交列表、改动文件 diff、检索 |
-| `/action` | Action 流水线 | workflows、运行记录（含分支列）、手动触发（解析 workflow inputs）、取消/重跑/日志下载、仓库 Variables/Secrets 管理（RSA 公钥加密写入）、产物与 Check 状态 |
+| `/action` | Action 流水线 | workflows、运行记录（含分支列）、**执行进度（Job/步骤级：当前执行到哪一步、每步耗时、进度条，3 秒实时轮询；列表内联进度条与当前步骤）**、日志顶部实时显示当前步骤、手动触发（解析 workflow inputs）、取消/重跑/日志下载、仓库 Variables/Secrets 管理（RSA 公钥加密写入）、产物与 Check 状态 |
 | `/release` | Release 管理 | 列表/新建/编辑/删除，带进度与**断点续传**的资产下载（中断后可一键继续） |
 | `/file` | 文件管理 | 在线浏览/编辑/新增/删除（Contents API 直提远程仓库）、**单文件下载（Android 原生流式 / Web·Windows blob 落盘，记录进「下载」页）**、图片预览、**PDF 在线预览（pdf.js 按页渲染，超大 PDF 也能预览）**、`.md` 源码/渲染双视图 |
 | `/issue` | Issue 管理 | 列表（状态筛选、标签多选、最新关联提交列）、详情/评论、**Markdown 编辑器与渲染**、**仓库标签下拉管理（含 × 删除标签）** |
@@ -111,7 +111,7 @@
 - `githubFork.ts`：创建 Fork（202 异步）、Fork 列表（排序/分页）、所属组织、**同步上游（`merge-upstream`）**
 - `githubIssue.ts`：Issue、评论、时间线（关联提交）、仓库标签（列表/删除）、提交详情
 - `githubPullRequest.ts`：PR、文件、审核、合并、关闭
-- `githubAction.ts`：workflow/run/jobs/logs、仓库变量与密钥（RSA 密封）、产物、Check 注解
+- `githubAction.ts`：workflow/run/jobs（含 steps 步骤明细）/logs（同时回传 Job 与步骤）、仓库变量与密钥（RSA 密封）、产物、Check 注解
 - `githubRelease.ts`：Release 的增删改查与详情（资产下载已统一走 `resumable.ts`）
 - `resumable.ts`：**通用分片下载器**——带 `Range` 断点续传、`Content-Range` 解析总长、中断时把已收到字节打成分片交还调用方、完整性校验
 - `githubFile.ts`：Contents API 树/内容/原始 Base64/Blob 兜底、在线增改删
