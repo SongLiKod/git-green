@@ -27,15 +27,28 @@ export interface WorkflowRun {
   updated_at: string
 }
 
+/** Job 内的单个执行步骤（对应 GitHub Actions 页面左侧步骤列表） */
+export interface RunStep {
+  name: string
+  status: 'queued' | 'in_progress' | 'completed' | string
+  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'neutral' | 'timed_out' | 'action_required' | null
+  number: number
+  started_at: string | null
+  completed_at: string | null
+}
+
 export interface RunJob {
   id: number
   run_id: number
   name: string
   status: string
   conclusion: string | null
-  started_at: string
+  started_at: string | null
   completed_at: string | null
   check_run_url: string
+  /** 步骤明细（jobs 接口自带，进度面板逐轮轮询即可实时高亮当前步骤） */
+  steps?: RunStep[]
+  html_url?: string
 }
 
 /** 获取所有 Workflow 工作流列表 */
@@ -179,13 +192,14 @@ export function listRunJobs(
 /**
  * 获取运行日志：逐 Job 拉取原始日志文本并合并，
  * 页面轮询调用即可实时流式查看运行日志。
+ * 同时回传 jobs（含 steps），供日志/进度面板显示“当前执行到哪一步”。
  */
 export async function getRunLogs(
   token: string,
   owner: string,
   repo: string,
   runId: number
-): Promise<ApiResult<string>> {
+): Promise<ApiResult<{ text: string; jobs: RunJob[] }>> {
   const jobsRes = await listRunJobs(token, owner, repo, runId)
   if (jobsRes.code !== 200 || !jobsRes.data) return { code: jobsRes.code, msg: jobsRes.msg }
   const headers = { ...auth(token), Accept: 'application/vnd.github+json' }
@@ -201,7 +215,7 @@ export async function getRunLogs(
       text += '\n'
     }
   }
-  return { code: 200, msg: 'success', data: text }
+  return { code: 200, msg: 'success', data: { text, jobs: jobsRes.data.jobs } }
 }
 
 /** 读取 Workflow yml 文件内容（在线编辑前加载） */
