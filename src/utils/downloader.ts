@@ -1,6 +1,6 @@
 import { auth } from '@/api/request'
 import { downloadResumable } from '@/api/resumable'
-import { loadDownloadPart, saveDownloadPart, removeDownloadPart } from './db'
+import { loadDownloadPart, saveDownloadPart, removeDownloadPart, updateDownloadProgress } from './db'
 import {
   blobDownload,
   isAndroidClient,
@@ -62,8 +62,20 @@ export async function executeDownload(task: DownloadSpec, pat: string, handlers:
   activeIds.add(task.id)
   const release = () => activeIds.delete(task.id)
 
+  // 进度统一出口：回调 + 每秒一次写回下载记录，「我的下载」页轮询即可实时展示进度条
+  let lastPersist = 0
+  const reportProgress = (loaded: number, total: number) => {
+    const percent = percentOf(loaded, total, task.size)
+    handlers.onProgress?.(loaded, total, percent)
+    const now = Date.now()
+    if (now - lastPersist >= 1000) {
+      lastPersist = now
+      void updateDownloadProgress(task.id, loaded, total, percent)
+    }
+  }
+
   const nativeHandled = startNativeDownload(task.id, task.url, headers, task.filename, {
-    onProgress: (loaded, total) => handlers.onProgress?.(loaded, total, percentOf(loaded, total, task.size)),
+    onProgress: (loaded, total) => reportProgress(loaded, total),
     onDone: saved => {
       release()
       handlers.onDone?.({ path: saved.path, uri: saved.uri, total: task.size || 0 })
@@ -82,7 +94,7 @@ export async function executeDownload(task: DownloadSpec, pat: string, handlers:
       accept: task.accept,
       partial,
       signal: task.signal,
-      onProgress: (loaded, total) => handlers.onProgress?.(loaded, total, percentOf(loaded, total, task.size))
+      onProgress: (loaded, total) => reportProgress(loaded, total)
     })
 
     if (res.code === 200 && res.data?.blob) {
