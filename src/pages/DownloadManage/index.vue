@@ -3,7 +3,7 @@
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <div class="m-toolbar">
-        <van-button size="small" type="primary" @click="load">刷新</van-button>
+        <van-button size="small" type="primary" @click="load()">刷新</van-button>
         <van-button v-if="isAndroid" size="small" plain @click="openDir">打开下载目录</van-button>
       </div>
       <van-empty v-if="records.length === 0" description="暂无下载记录" />
@@ -12,6 +12,10 @@
           <div class="m-card-title">
             <div class="t">{{ r.filename }}</div>
             <div class="m-sub">{{ statusText(r.status) }} · {{ formatSize(r.size) }} · {{ formatTime(r.time) }}</div>
+            <div v-if="r.status === 'downloading'" class="m-prog">
+              <van-progress :percentage="progPercent(r)" :show-pivot="false" />
+              <div class="m-sub">{{ progText(r) }}</div>
+            </div>
             <div v-if="r.status === 'done' && r.path" class="m-sub">已保存到 {{ r.path }}</div>
             <div v-else-if="r.status === 'error' && r.error" class="m-sub">
               失败：{{ r.error }}
@@ -46,7 +50,7 @@
           <div class="card-header">
             <span>下载记录（{{ records.length }}）</span>
             <div>
-              <el-button @click="load">刷新</el-button>
+              <el-button @click="load()">刷新</el-button>
             </div>
           </div>
         </template>
@@ -63,6 +67,20 @@
           </el-table-column>
           <el-table-column label="大小" width="100">
             <template #default="{ row }">{{ formatSize(row.size) }}</template>
+          </el-table-column>
+          <el-table-column label="进度" width="200">
+            <template #default="{ row }">
+              <template v-if="row.status === 'downloading' || (row.status === 'error' && row.percent)">
+                <el-progress
+                  :percentage="progPercent(row)"
+                  :status="row.status === 'error' ? 'exception' : ''"
+                  :stroke-width="14"
+                  text-inside
+                />
+                <div v-if="row.status === 'downloading'" class="prog-sub">{{ progText(row) }}</div>
+              </template>
+              <span v-else>-</span>
+            </template>
           </el-table-column>
           <el-table-column label="保存位置" min-width="240">
             <template #default="{ row }">
@@ -127,9 +145,10 @@ const isAndroid = computed(() => isAndroidClient())
 
 const records = ref<DownloadRecord[]>([])
 const loading = ref(false)
+let pollTimer = 0
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   const all = await listDownloads()
   // 上次会话遗留的「下载中」按中断处理（本会话仍在跑的不动），带 url 的可一键继续
   records.value = all.map(r =>
@@ -137,7 +156,28 @@ async function load() {
       ? { ...r, status: 'error' as const, error: r.error || (r.url ? '已中断，可继续下载' : '已中断') }
       : { ...r }
   )
-  loading.value = false
+  if (!silent) loading.value = false
+  ensurePolling()
+}
+
+/** 有下载进行中时每 2 秒静默刷新进度（executeDownload 每秒把进度写回记录） */
+function ensurePolling() {
+  const active = records.value.some(r => r.status === 'downloading' && isDownloadActive(r.id))
+  if (active && !pollTimer) pollTimer = window.setInterval(() => void load(true), 2000)
+  if (!active && pollTimer) {
+    window.clearInterval(pollTimer)
+    pollTimer = 0
+  }
+}
+
+function progPercent(r: DownloadRecord): number {
+  return Math.max(0, Math.min(100, Math.round(r.percent || 0)))
+}
+
+function progText(r: DownloadRecord): string {
+  const loaded = r.loaded ? formatSize(r.loaded) : ''
+  const total = r.size ? ` / ${formatSize(r.size)}` : ''
+  return loaded ? `${loaded}${total}` : `${progPercent(r)}%`
 }
 
 /** 记录来自哪个模块 → 写日志时的归类 */
@@ -263,13 +303,25 @@ onMounted(() => {
   load()
   setNativeMessageHandler(msg => ElMessage.warning(msg))
 })
-onBeforeUnmount(() => setNativeMessageHandler(null))
+onBeforeUnmount(() => {
+  if (pollTimer) window.clearInterval(pollTimer)
+  pollTimer = 0
+  setNativeMessageHandler(null)
+})
 </script>
 
 <style scoped>
 .mono {
   font-family: Consolas, monospace;
   font-weight: 600;
+}
+.prog-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.m-prog {
+  margin-top: 6px;
 }
 .card-header {
   display: flex;

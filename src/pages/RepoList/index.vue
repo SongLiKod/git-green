@@ -26,7 +26,7 @@
       </div>
 
       <!-- GitHub 全站模糊搜索：仅展示结果，点击「进入查看」不入列，点「加入外部」才写入外部列表 -->
-      <GithubSearchResults v-if="ghMode" :keyword="searchKw" @enter="enterForView" @fork="openFork" />
+      <GithubSearchResults v-if="ghMode" :keyword="searchKw" @enter="enterForView" @fork="openFork" @close="exitGhSearch" />
 
       <van-empty v-if="displayRepos.length === 0" :description="emptyText" />
       <div v-for="(r, idx) in displayRepos" :key="r.full_name" class="m-card" @click="openSheet(r)">
@@ -144,7 +144,7 @@
     </div>
 
     <!-- GitHub 全站模糊搜索结果：「进入查看」不入列，点「加入外部」才写入外部列表 -->
-    <GithubSearchResults v-if="ghMode" :keyword="searchKw" @enter="enterForView" @fork="openFork" />
+    <GithubSearchResults v-if="ghMode" :keyword="searchKw" @enter="enterForView" @fork="openFork" @close="exitGhSearch" />
 
     <el-row :gutter="14">
       <!-- 树形结构：账号 → 仓库列表（默认向左折叠成窄条，账号节点默认收起） -->
@@ -413,6 +413,12 @@ watch(ghMode, v => {
 onActivated(() => {
   if (ghMode.value) focusSearch()
 })
+
+/** 退出 GitHub 全站搜索：关掉搜索范围并清空关键词，面板与列表筛选都不留残余 */
+function exitGhSearch() {
+  ghMode.value = false
+  searchKw.value = ''
+}
 const onlyFavorite = ref(false)
 const onlyAdHoc = ref(false)
 const createVisible = ref(false)
@@ -646,11 +652,13 @@ function enterRepo(r: GitHubRepo) {
 }
 
 /* ---------- GitHub 全站搜索结果的操作 ---------- */
-/** 「进入查看」：仅把搜索结果设为当前仓库上下文供各功能页使用，不写入外部列表 */
+/** 「进入查看」：仅把搜索结果设为当前仓库上下文供各功能页使用，不写入外部列表；
+ *  进入后自动退出全站搜索，返回仓库列表时不再残留搜索面板 */
 function enterForView(r: GitHubRepo) {
   const listed = repoStore.findAccountIdByRepo(r.full_name)
   if (listed) repoStore.selectRepo(r.full_name)
   else repoStore.enterPreviewRepo(r)
+  exitGhSearch()
   ElMessage.success(
     listed
       ? `已进入 ${r.full_name}，可查看设置/分支/Action/Release/文件等能力`

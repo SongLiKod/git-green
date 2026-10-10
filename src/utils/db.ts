@@ -104,6 +104,17 @@ function idbGetAll<T>(store: string): Promise<T[]> {
   )
 }
 
+function idbGet<T>(store: string, key: IDBValidKey): Promise<T | undefined> {
+  return openDb().then(
+    db =>
+      new Promise<T | undefined>((resolve, reject) => {
+        const req = db.transaction(store, 'readonly').objectStore(store).get(key)
+        req.onsuccess = () => resolve(req.result as T | undefined)
+        req.onerror = () => reject(req.error)
+      })
+  )
+}
+
 function idbClear(store: string): Promise<void> {
   return openDb().then(
     db =>
@@ -169,6 +180,20 @@ export async function clearLogs(): Promise<void> {
 export async function saveDownload(task: DownloadRecord): Promise<void> {
   try {
     await idbPut(STORE_DOWNLOADS, { ...task, time: task.time || Date.now() })
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 下载途中节流刷新进度字段（percent/loaded/size），「我的下载」页据此实时画进度条 */
+export async function updateDownloadProgress(id: string, loaded: number, total: number, percent: number): Promise<void> {
+  try {
+    const rec = await idbGet<DownloadRecord>(STORE_DOWNLOADS, id)
+    if (!rec || rec.status !== 'downloading') return
+    rec.loaded = loaded
+    rec.percent = percent
+    if (total && !rec.size) rec.size = total
+    await idbPut(STORE_DOWNLOADS, rec)
   } catch {
     /* ignore */
   }
