@@ -83,8 +83,14 @@
                   <span>{{ r.full_name }}</span>
                   <el-tag v-if="repoStore.isAdHocRepo(r.full_name)" size="small" type="info" effect="plain" style="margin-left: 8px">外部</el-tag>
                 </el-option>
+                <el-option
+                  v-if="previewOption"
+                  :label="`${previewOption.full_name}（浏览中）`"
+                  :value="previewOption.full_name"
+                />
               </el-select>
               <el-tag v-if="repoStore.currentRepoFullName && repoStore.isAdHocRepo(repoStore.currentRepoFullName)" size="small" type="info" effect="plain">外部</el-tag>
+              <el-tag v-if="previewOption" size="small" type="warning" effect="plain">浏览</el-tag>
               <el-button link type="primary" @click="repoStore.refreshCurrent()">刷新</el-button>
             </template>
             <el-tag v-if="accountStore.activeAccount" :type="statusType" effect="dark" size="small">
@@ -118,6 +124,11 @@
                 :key="r.full_name"
                 :label="repoStore.isAdHocRepo(r.full_name) ? `${r.name}（外部）` : r.name"
                 :value="r.full_name"
+              />
+              <el-option
+                v-if="previewOption"
+                :label="`${previewOption.name}（浏览中）`"
+                :value="previewOption.full_name"
               />
             </el-select>
             <div class="icon-btn" title="打开链接" @click="openLinkVisible = true">
@@ -271,6 +282,13 @@ const showContextBar = computed(() =>
 )
 
 const repoLoading = computed(() => !!repoStore.loadingMap[repoStore.currentAccountId])
+
+/** 搜索结果「进入查看」的预览仓库：不在任何列表中，顶栏额外补一个可选中项 */
+const previewOption = computed(() => {
+  const p = repoStore.previewRepo
+  if (!p || p.full_name !== repoStore.currentRepoFullName) return null
+  return repoStore.currentRepos.some(r => r.full_name === p.full_name) ? null : p
+})
 
 function toggleCollapse() {
   settingsStore.update({ menuCollapsed: !settingsStore.config.menuCollapsed })

@@ -27,6 +27,16 @@ export interface GitHubRepo {
   source?: Pick<GitHubRepo, 'id' | 'name' | 'full_name' | 'owner' | 'private' | 'default_branch' | 'fork'>
 }
 
+/** GitHub 全站仓库搜索结果（/search/repositories） */
+export interface RepoSearchResponse {
+  total_count: number
+  incomplete_results: boolean
+  items: GitHubRepo[]
+}
+
+/** 搜索排序：相关度（默认）/ Stars / 更新时间 */
+export type RepoSearchSort = 'bestmatch' | 'stars' | 'forks' | 'updated'
+
 export interface CreateRepoPayload {
   name: string
   description?: string
@@ -71,6 +81,24 @@ export async function getUserRepos(token: string): Promise<ApiResult<GitHubRepo[
     page++
   }
   return { code: 200, msg: 'success', data: all }
+}
+
+/**
+ * GitHub 全站仓库模糊搜索（/search/repositories）：
+ * 关键词支持名称/描述/README 等自由匹配（GitHub 侧自动模糊匹配），
+ * 不传 token 时为匿名搜索（限流更严格，10 次/分钟）。
+ */
+export function searchRepos(
+  query: string,
+  opts: { token?: string; page?: number; perPage?: number; sort?: RepoSearchSort } = {}
+): Promise<ApiResult<RepoSearchResponse>> {
+  const { token, page = 1, perPage = 20, sort = 'bestmatch' } = opts
+  const params = [`q=${encodeURIComponent(query.trim())}`, `page=${page}`, `per_page=${perPage}`]
+  if (sort && sort !== 'bestmatch') params.push(`sort=${sort}`, 'order=desc')
+  const config = token ? { headers: auth(token) } : {}
+  return service.get(`/search/repositories?${params.join('&')}`, config) as unknown as Promise<
+    ApiResult<RepoSearchResponse>
+  >
 }
 
 /** 新建远程仓库 */

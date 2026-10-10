@@ -2,11 +2,18 @@
   <div class="page" :class="{ 'is-desktop': !isMobile }">
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
-      <van-search v-model="searchKw" placeholder="跨账号全局搜索仓库" shape="round" />
+      <van-search
+        v-model="searchKw"
+        :placeholder="ghMode ? '模糊搜索 GitHub 上的仓库（名称/描述/语言）' : '跨账号全局搜索仓库'"
+        shape="round"
+      />
       <van-tabs v-model:active="accountTabIndex" shrink>
         <van-tab v-for="acc in accountStore.accounts" :key="acc.id" :title="acc.remark || acc.username" />
       </van-tabs>
       <div class="m-toolbar">
+        <van-button size="small" plain :type="ghMode ? 'primary' : 'default'" @click="ghMode = !ghMode">
+          {{ ghMode ? '退出搜GitHub' : '搜GitHub' }}
+        </van-button>
         <van-button type="primary" size="small" @click="createVisible = true">新建远程仓库</van-button>
         <van-button size="small" :loading="loading" @click="repoStore.refreshCurrent()">刷新</van-button>
         <van-button size="small" plain :type="onlyFavorite ? 'warning' : 'default'" @click="onlyFavorite = !onlyFavorite">
@@ -16,6 +23,10 @@
           {{ onlyAdHoc ? '看全部' : '只看外部' }}
         </van-button>
       </div>
+
+      <!-- GitHub 全站模糊搜索：仅展示结果，点击「进入查看」不入列，点「加入外部」才写入外部列表 -->
+      <GithubSearchResults v-if="ghMode" :keyword="searchKw" @enter="enterForView" @fork="openFork" />
+
       <van-empty v-if="displayRepos.length === 0" :description="emptyText" />
       <div v-for="(r, idx) in displayRepos" :key="r.full_name" class="m-card" @click="openSheet(r)">
         <div class="m-card-head">
@@ -120,13 +131,19 @@
     <div class="page-toolbar">
       <el-input
         v-model="searchKw"
-        placeholder="跨账号全局搜索仓库（名称/简介）"
+        :placeholder="ghMode ? '输入关键词模糊搜索 GitHub 上的仓库（名称/描述/语言，支持 qualifier）' : '跨账号全局搜索仓库（名称/简介）'"
         clearable
-        style="width: 320px"
+        style="width: 360px"
       />
+      <el-button :type="ghMode ? 'primary' : 'default'" :plain="!ghMode" @click="ghMode = !ghMode">
+        {{ ghMode ? '退出搜GitHub' : '搜GitHub' }}
+      </el-button>
       <el-button type="primary" @click="createVisible = true">新建远程仓库</el-button>
       <el-button :loading="loading" @click="repoStore.refreshCurrent()">刷新仓库</el-button>
     </div>
+
+    <!-- GitHub 全站模糊搜索结果：「进入查看」不入列，点「加入外部」才写入外部列表 -->
+    <GithubSearchResults v-if="ghMode" :keyword="searchKw" @enter="enterForView" @fork="openFork" />
 
     <el-row :gutter="14">
       <!-- 树形结构：账号 → 仓库列表（默认向左折叠成窄条，账号节点默认收起） -->
@@ -321,9 +338,11 @@
       <div class="form-tip">SSH 使用账号自定义主机（账号管理里可修改）；配置了自定义主机时才额外展示 默认SSH 地址</div>
     </el-dialog>
 
+    </template>
+
+    <!-- 弹窗挂在页面根节点：移动端/桌面端共用 -->
     <QrDialog v-model="qrVisible" :text="qrText" :title="qrTitle" />
     <ForkDialog v-model="forkVisible" :repo="forkRepo" />
-    </template>
   </div>
 </template>
 
@@ -342,6 +361,7 @@ import { getBranches } from '@/api/githubBranch'
 import { isWindowsClient, useIsMobile } from '@/utils/platform'
 import QrDialog from '@/components/QrDialog.vue'
 import ForkDialog from '@/components/ForkDialog.vue'
+import GithubSearchResults from '@/components/GithubSearchResults.vue'
 
 const accountStore = useAccountStore()
 const repoStore = useRepoStore()
@@ -352,6 +372,8 @@ const router = useRouter()
 const route = useRoute()
 
 const searchKw = ref('')
+/** 开关「搜GitHub」：开启后展示 GitHub 全站模糊搜索结果面板 */
+const ghMode = ref(false)
 const onlyFavorite = ref(false)
 const onlyAdHoc = ref(false)
 const createVisible = ref(false)
@@ -463,11 +485,11 @@ const displayRepos = computed<GitHubRepo[]>(() => {
   return applyFilters(repoStore.sortedRepos(repoStore.currentRepos))
 })
 
-const emptyText = computed(() =>
-  onlyAdHoc.value
-    ? '暂无外部仓库，可通过顶栏「打开链接」接入账号外的仓库'
-    : '暂无仓库，请从左侧选择账号或点击「新建远程仓库」'
-)
+const emptyText = computed(() => {
+  if (ghMode.value && searchKw.value.trim()) return '本地列表未匹配到仓库，可查看上方「GitHub 全站搜索」结果'
+  if (onlyAdHoc.value) return '暂无外部仓库，可通过顶栏「打开链接」或「搜GitHub → 加入外部」接入账号外的仓库'
+  return '暂无仓库，请从左侧选择账号或点击「新建远程仓库」'
+})
 
 const repoGroups = computed(() => {
   const groups = new Set<string>()
@@ -582,6 +604,26 @@ function onSheetSelect(action: { path: string }) {
 function enterRepo(r: GitHubRepo) {
   repoStore.selectRepo(r.full_name)
   router.push('/repo-setting')
+}
+
+/* ---------- GitHub 全站搜索结果的操作 ---------- */
+/** 「进入查看」：仅把搜索结果设为当前仓库上下文供各功能页使用，不写入外部列表 */
+function enterForView(r: GitHubRepo) {
+  const listed = repoStore.findAccountIdByRepo(r.full_name)
+  if (listed) repoStore.selectRepo(r.full_name)
+  else repoStore.enterPreviewRepo(r)
+  ElMessage.success(
+    listed
+      ? `已进入 ${r.full_name}，可查看设置/分支/Action/Release/文件等能力`
+      : `正在查看 ${r.full_name}（未加入列表，点击「加入外部」后才会进入外部列表）`
+  )
+  router.push('/repo-setting')
+}
+
+/** 搜索结果「Fork」：源仓库不在列表中，不改动当前仓库上下文 */
+function openFork(r: GitHubRepo) {
+  forkRepo.value = r
+  forkVisible.value = true
 }
 
 /* ---------- Fork ---------- */
