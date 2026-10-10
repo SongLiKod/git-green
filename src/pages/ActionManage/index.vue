@@ -30,7 +30,7 @@
 <template v-else-if="tab === 'runs'">
           <div class="m-toolbar">
             <van-cell title="筛选" :value="runFilterName" style="flex: 1; padding: 0" @click="openRunFilter" />
-            <van-button size="small" :loading="runsLoading" @click="loadRuns">刷新</van-button>
+            <van-button size="small" :loading="runsLoading" @click="refreshRuns">刷新</van-button>
             <van-switch v-model="autoRefresh" size="18" title="自动刷新" />
           </div>
           <van-empty v-if="runs.length === 0" description="暂无运行记录" />
@@ -40,6 +40,9 @@
               <div class="m-card-title">
                 <div class="t">#{{ r.run_number }} {{ r.display_title || r.name }}</div>
                 <div class="m-sub">{{ r.head_branch }} · {{ r.event }} · {{ new Date(r.created_at).toLocaleString() }}</div>
+                <div v-if="runTags[r.id]" class="m-sub m-rel">
+                  <van-tag type="success" plain size="medium" class="mono">{{ runTags[r.id] }}</van-tag>
+                </div>
                 <div v-if="r.status !== 'completed' && runProgress[r.id]" class="m-sub m-prog">
                   <span class="m-prog-bar"><i :style="{ width: progPct(runProgress[r.id]) + '%' }" /></span>
                   <span class="m-prog-txt">
@@ -118,14 +121,27 @@
             <van-cell-group inset>
               <van-cell title="工作流" :value="triggerTarget?.name" />
               <van-field :model-value="triggerRef" label="分支" placeholder="选择分支" readonly is-link @click="openBranchPicker" />
-              <van-field
-                v-for="inp in triggerInputs"
-                :key="inp.id"
-                :model-value="triggerVals[inp.id]"
-                :label="inputLabel(inp)"
-                :placeholder="inp.description || inp.id"
-                @update:model-value="triggerVals[inp.id] = $event"
-              />
+              <template v-for="inp in triggerInputs" :key="inp.id">
+                <van-field
+                  v-if="!isBoolInput(inp)"
+                  :model-value="triggerVals[inp.id]"
+                  :label="inputLabel(inp)"
+                  :placeholder="inputPlaceholder(inp)"
+                  @update:model-value="triggerVals[inp.id] = $event"
+                />
+                <van-field
+                  v-else
+                  :model-value="boolText(triggerVals[inp.id])"
+                  :label="inputLabel(inp)"
+                  readonly
+                  is-link
+                  placeholder="请选择"
+                  @click="openBoolPicker(inp)"
+                />
+                <div v-if="isVersionInput(inp) && lastReleaseTag" class="m-tip" @click="fillLastTag(inp)">
+                  上一个发布 tag：<b class="mono">{{ lastReleaseTag }}</b>（点击填入）
+                </div>
+              </template>
             </van-cell-group>
             <van-button block type="primary" style="margin-top: 14px" :loading="saving" @click="submitTrigger">触发运行</van-button>
           </div>
@@ -259,7 +275,7 @@
             <el-select v-model="runFilterWorkflow" clearable placeholder="全部工作流" style="width: 220px" @change="loadRuns">
               <el-option v-for="w in workflows" :key="w.id" :label="w.name" :value="w.id" />
             </el-select>
-            <el-button @click="loadRuns">刷新</el-button>
+            <el-button @click="refreshRuns">刷新</el-button>
             <el-checkbox v-model="autoRefresh">自动刷新（运行中实时状态）</el-checkbox>
           </div>
           <el-table :data="runs" border stripe v-loading="runsLoading">
@@ -271,6 +287,12 @@
             </el-table-column>
             <el-table-column prop="head_branch" label="分支" width="140" />
             <el-table-column prop="event" label="触发方式" width="130" />
+            <el-table-column label="发布tag" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="runTags[row.id]" size="small" type="success" class="mono">{{ runTags[row.id] }}</el-tag>
+                <span v-else class="tag-none">-</span>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="190">
               <template #default="{ row }">
                 <el-tag size="small" :type="runTagType(row)">{{ runText(row) }}</el-tag>
@@ -363,7 +385,16 @@
           </el-select>
         </el-form-item>
         <el-form-item v-for="inp in triggerInputs" :key="inp.id" :label="inputLabel(inp)">
-          <el-input v-model="triggerVals[inp.id]" :placeholder="inp.description || inp.id" />
+          <el-select v-if="isBoolInput(inp)" v-model="triggerVals[inp.id]" style="width: 100%">
+            <el-option label="否（false）" value="false" />
+            <el-option label="是（true）" value="true" />
+          </el-select>
+          <template v-else>
+            <el-input v-model="triggerVals[inp.id]" :placeholder="inputPlaceholder(inp)" />
+            <div v-if="isVersionInput(inp) && lastReleaseTag" class="form-tip trigger-tip" @click="fillLastTag(inp)">
+              上一个发布 tag：<b class="mono">{{ lastReleaseTag }}</b>（点击填入）
+            </div>
+          </template>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -513,6 +544,7 @@ import type { Workflow, WorkflowRun, RunJob, RepoVariable, RepoSecret, RunArtifa
 import { type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
+import { listReleases, listTags } from '@/api/githubRelease'
 import { shortenPath } from '@/utils/file'
 import { saveDownload } from '@/utils/db'
 import { executeDownload, saveBlob } from '@/utils/downloader'
@@ -534,7 +566,8 @@ const wSheetVisible = ref(false)
 const wSheetTarget = ref<Workflow | null>(null)
 const mPickerVisible = ref(false)
 const mPickerColumns = ref<{ text: string; value: string | number }[]>([])
-let mPickerAction: 'branch' | 'runfilter' = 'branch'
+let mPickerAction: 'branch' | 'runfilter' | 'bool' = 'branch'
+let mBoolTargetId = ''
 
 const runFilterName = computed(() => {
   if (!runFilterWorkflow.value) return '全部工作流'
@@ -696,9 +729,20 @@ function openRunFilter() {
   mPickerVisible.value = true
 }
 
+function openBoolPicker(inp: { id: string }) {
+  mPickerAction = 'bool'
+  mBoolTargetId = inp.id
+  mPickerColumns.value = [
+    { text: '否（false）', value: 'false' },
+    { text: '是（true）', value: 'true' }
+  ]
+  mPickerVisible.value = true
+}
+
 function onMPickerConfirm(payload: { selectedValues: (string | number)[] }) {
   const v = payload.selectedValues[0]
   if (mPickerAction === 'branch') triggerRef.value = String(v)
+  else if (mPickerAction === 'bool') triggerVals[mBoolTargetId] = String(v)
   else {
     runFilterWorkflow.value = Number(v) || undefined
     loadRuns()
@@ -724,9 +768,57 @@ const triggerRef = ref('')
 const triggerInputs = ref<ReturnType<typeof parseWorkflowInputs>>([])
 const triggerVals = reactive<Record<string, string>>({})
 
-function inputLabel(inp: (typeof triggerInputs.value)[number]) {
+type TriggerInput = (typeof triggerInputs.value)[number]
+
+/** 上一个发布 tag（触发面板提示用，60 秒缓存） */
+const lastReleaseTag = ref('')
+let lastTagCache: { key: string; at: number; tag: string } | null = null
+
+/** 是否为“发布 tag”类输入（yml 中的 version / tag 等） */
+function isVersionInput(inp: TriggerInput) {
   const id = inp.id.toLowerCase()
-  return id.includes('version') || id === 'tag' || id.includes('发布') ? '发布tag' : inp.id
+  return id.includes('version') || id === 'tag' || id.includes('发布')
+}
+
+function inputLabel(inp: TriggerInput) {
+  return isVersionInput(inp) ? '发布tag' : inp.id
+}
+
+/** boolean 类型输入（如 prerelease）渲染为下拉单选 */
+function isBoolInput(inp: TriggerInput) {
+  return inp.type === 'boolean'
+}
+
+function boolText(v?: string) {
+  return v === 'true' ? '是（true）' : '否（false）'
+}
+
+function inputPlaceholder(inp: TriggerInput) {
+  if (isVersionInput(inp) && lastReleaseTag.value) return `如 v1.2.0（上一个发布 tag：${lastReleaseTag.value}）`
+  return inp.description || inp.id
+}
+
+/** 点击提示直接把上一个发布 tag 填入输入框 */
+function fillLastTag(inp: TriggerInput) {
+  if (lastReleaseTag.value) triggerVals[inp.id] = lastReleaseTag.value
+}
+
+/** 读取上一个发布 tag（最新一条非草稿 Release），用于触发面板提示 */
+async function loadLastReleaseTag(force = false) {
+  const c = ctx.value
+  if (!c) return
+  const key = `${c.owner}/${c.repo}`
+  const now = Date.now()
+  if (!force && lastTagCache && lastTagCache.key === key && now - lastTagCache.at < 60_000) {
+    lastReleaseTag.value = lastTagCache.tag
+    return
+  }
+  const pat = await withPat()
+  const res = await listReleases(pat, c.owner, c.repo)
+  if (res.code !== 200) return
+  const tag = (res.data || []).find(r => !r.draft)?.tag_name || ''
+  lastTagCache = { key, at: now, tag }
+  lastReleaseTag.value = tag
 }
 
 const editorVisible = ref(false)
@@ -780,7 +872,78 @@ async function loadRuns() {
   if (res.code === 200) {
     runs.value = res.data?.workflow_runs || []
     maybeLoadRunProgress()
+    void loadRunTags()
   } else ElMessage.error(`运行记录加载失败：${res.msg}`)
+}
+
+/* ---------- 运行记录 → 发布 tag：Release 的 tag 若指向该次运行的提交，则在历史记录上显示 ---------- */
+const runTags = ref<Record<number, string>>({})
+let tagMapCache: { key: string; at: number; map: Map<string, string[]> } | null = null
+let releaseTagsCache: { key: string; at: number; names: string[] } | null = null
+const TAG_MAP_TTL = 60_000
+let tagsLoading = false
+
+/** 手动刷新时强制重新拉取 tag 映射（自动刷新走 60 秒缓存，避免请求过多） */
+function refreshRuns() {
+  tagMapCache = null
+  releaseTagsCache = null
+  loadRuns()
+}
+
+async function loadRunTags() {
+  const c = ctx.value
+  if (!c || !runs.value.length) {
+    runTags.value = {}
+    return
+  }
+  const key = `${c.owner}/${c.repo}`
+  const now = Date.now()
+  if (tagMapCache?.key !== key) runTags.value = {}
+
+  let shaTags = tagMapCache && tagMapCache.key === key && now - tagMapCache.at < TAG_MAP_TTL ? tagMapCache.map : null
+  let releaseNames = releaseTagsCache && releaseTagsCache.key === key && now - releaseTagsCache.at < TAG_MAP_TTL ? releaseTagsCache.names : null
+
+  if (!shaTags || !releaseNames) {
+    if (tagsLoading) return // 只拉一轮，结束后下一次 loadRuns 自然命中缓存
+    tagsLoading = true
+    try {
+      const pat = await withPat()
+      const [relRes, tagRes1, tagRes2] = await Promise.all([
+        listReleases(pat, c.owner, c.repo),
+        listTags(pat, c.owner, c.repo, 1),
+        listTags(pat, c.owner, c.repo, 2)
+      ])
+      if (relRes.code === 200 && tagRes1.code === 200 && tagRes2.code === 200) {
+        // 仅统计已发布的 Release（草稿不计入），按创建时间新→旧
+        releaseNames = (relRes.data || []).filter(r => !r.draft).map(r => r.tag_name)
+        const tagSha = new Map<string, string>()
+        for (const t of [...(tagRes1.data || []), ...(tagRes2.data || [])]) if (!tagSha.has(t.name)) tagSha.set(t.name, t.commit.sha)
+        const map = new Map<string, string[]>()
+        for (const name of releaseNames) {
+          const sha = tagSha.get(name)
+          if (!sha) continue
+          const arr = map.get(sha) || []
+          arr.push(name)
+          map.set(sha, arr)
+        }
+        shaTags = map
+        tagMapCache = { key, at: Date.now(), map }
+        releaseTagsCache = { key, at: Date.now(), names: releaseNames }
+      }
+    } finally {
+      tagsLoading = false
+    }
+    if (!shaTags || !releaseNames) return // 拉取失败：保留现有显示
+  }
+
+  const next: Record<number, string> = {}
+  for (const r of runs.value) {
+    const names = shaTags.get(r.head_sha) || []
+    // 同一提交挂了多个发布 tag 时优先取与本次运行分支/标签同名的那个
+    const hit = names.includes(r.head_branch) ? r.head_branch : names[0] || releaseNames.find(n => n === r.head_branch) || ''
+    if (hit) next[r.id] = hit
+  }
+  runTags.value = next
 }
 
 /* ---------- 列表内联步骤进度：仅对运行中的 Run 拉 Job/步骤（节流，避免限流） ---------- */
@@ -876,8 +1039,9 @@ async function openTrigger(w: Workflow) {
   const fc = await getWorkflowFileContent(pat, ctx.value.owner, ctx.value.repo, w.path, triggerRef.value)
   if (fc.code === 200 && fc.data?.content) {
     triggerInputs.value = parseWorkflowInputs(base64ToUtf8(fc.data.content))
-    for (const inp of triggerInputs.value) triggerVals[inp.id] = inp.default || ''
+    for (const inp of triggerInputs.value) triggerVals[inp.id] = inp.default || (inp.type === 'boolean' ? 'false' : '')
   }
+  void loadLastReleaseTag()
 }
 
 async function submitTrigger() {
@@ -891,6 +1055,10 @@ async function submitTrigger() {
   if (res.code === 200 || res.code === 202) {
     ElMessage.success('流水线已触发（若失败请确认该Workflow是否支持 workflow_dispatch 事件）')
     logStore.write({ module: 'action', action: '触发流水线', detail: `${triggerTarget.value.name} @ ${triggerRef.value}`, level: 'warning' })
+    // 本地 tag 映射缓存失效，保证新产生的发布 tag 能立刻显示在历史记录上
+    tagMapCache = null
+    releaseTagsCache = null
+    lastTagCache = null
     triggerVisible.value = false
     tab.value = 'runs'
     loadRuns()
@@ -1375,6 +1543,11 @@ watch(autoRefresh, v => {
 watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountStore.activeId], () => {
   runProgress.value = {}
   lastProgressAt = 0
+  runTags.value = {}
+  tagMapCache = null
+  releaseTagsCache = null
+  lastTagCache = null
+  lastReleaseTag.value = ''
   loadWorkflows()
   loadRuns()
   if (tab.value === 'vars') loadVars()
@@ -1444,6 +1617,32 @@ onBeforeUnmount(() => {
   color: var(--text-main);
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* 运行记录「发布tag」列 */
+.tag-none {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+.trigger-tip {
+  width: 100%;
+  margin-top: 2px;
+  cursor: pointer;
+}
+.trigger-tip:hover {
+  color: var(--color-primary);
+}
+.m-tip {
+  padding: 4px 16px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.m-tip b {
+  color: var(--color-primary);
+}
+.m-rel {
+  margin-top: 4px;
 }
 .form-tip {
   font-size: 12px;

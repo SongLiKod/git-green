@@ -40,6 +40,19 @@ export function listReleases(token: string, owner: string, repo: string): Promis
   }) as unknown as Promise<ApiResult<Release[]>>
 }
 
+/** 仓库标签（tag 指向的 commit sha，用于把运行记录映射到发布 tag） */
+export interface RepoTag {
+  name: string
+  commit: { sha: string; url: string }
+}
+
+/** 获取仓库标签列表（新→旧，每页最多 100 条） */
+export function listTags(token: string, owner: string, repo: string, page = 1): Promise<ApiResult<RepoTag[]>> {
+  return service.get(`/repos/${owner}/${repo}/tags?per_page=100&page=${page}`, {
+    headers: auth(token)
+  }) as unknown as Promise<ApiResult<RepoTag[]>>
+}
+
 /** Release 版本详情 */
 export function getReleaseDetail(token: string, owner: string, repo: string, id: number): Promise<ApiResult<Release>> {
   return service.get(`/repos/${owner}/${repo}/releases/${id}`, {
