@@ -83,8 +83,14 @@
                   <span>{{ r.full_name }}</span>
                   <el-tag v-if="repoStore.isAdHocRepo(r.full_name)" size="small" type="info" effect="plain" style="margin-left: 8px">外部</el-tag>
                 </el-option>
+                <el-option
+                  v-if="previewOption"
+                  :label="`${previewOption.full_name}（浏览中）`"
+                  :value="previewOption.full_name"
+                />
               </el-select>
               <el-tag v-if="repoStore.currentRepoFullName && repoStore.isAdHocRepo(repoStore.currentRepoFullName)" size="small" type="info" effect="plain">外部</el-tag>
+              <el-tag v-if="previewOption" size="small" type="warning" effect="plain">浏览</el-tag>
               <el-button link type="primary" @click="repoStore.refreshCurrent()">刷新</el-button>
             </template>
             <el-tag v-if="accountStore.activeAccount" :type="statusType" effect="dark" size="small">
@@ -93,6 +99,10 @@
             <span class="platform-tag">{{ platformName }}</span>
           </div>
           <div class="header-right">
+            <el-button link type="primary" @click="openGithubSearch">
+              <el-icon><Search /></el-icon>
+              <span style="margin-left: 4px">GitHub搜索</span>
+            </el-button>
             <el-button link type="primary" @click="openLinkVisible = true">
               <el-icon><Link /></el-icon>
               <span style="margin-left: 4px">打开链接</span>
@@ -119,7 +129,15 @@
                 :label="repoStore.isAdHocRepo(r.full_name) ? `${r.name}（外部）` : r.name"
                 :value="r.full_name"
               />
+              <el-option
+                v-if="previewOption"
+                :label="`${previewOption.name}（浏览中）`"
+                :value="previewOption.full_name"
+              />
             </el-select>
+            <div class="icon-btn" title="GitHub搜索" @click="openGithubSearch">
+              <el-icon :size="18"><Search /></el-icon>
+            </div>
             <div class="icon-btn" title="打开链接" @click="openLinkVisible = true">
               <el-icon :size="18"><Link /></el-icon>
             </div>
@@ -187,7 +205,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, RefreshRight, Odometer, Tickets, Connection, Link, CopyDocument } from '@element-plus/icons-vue'
+import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, RefreshRight, Odometer, Tickets, Connection, Link, CopyDocument, Search } from '@element-plus/icons-vue'
 import AppLock from '@/components/AppLock.vue'
 import OpenLinkDialog from '@/components/OpenLinkDialog.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -261,6 +279,12 @@ function onMobileRefresh() {
   else accountStore.checkAll()
 }
 
+/** 顶栏「GitHub搜索」：任意页面一键进入 GitHub 全站模糊搜索（落到仓库列表并开启搜索范围，输入框自动聚焦） */
+function openGithubSearch() {
+  repoStore.githubSearchMode = true
+  if (route.path !== '/repo') router.push('/repo')
+}
+
 const collapsed = computed(() => settingsStore.config.menuCollapsed)
 const isDesktop = isWindowsClient()
 const multiTab = computed(() => settingsStore.config.pageMode === 'multi')
@@ -271,6 +295,13 @@ const showContextBar = computed(() =>
 )
 
 const repoLoading = computed(() => !!repoStore.loadingMap[repoStore.currentAccountId])
+
+/** 搜索结果「进入查看」的预览仓库：不在任何列表中，顶栏额外补一个可选中项 */
+const previewOption = computed(() => {
+  const p = repoStore.previewRepo
+  if (!p || p.full_name !== repoStore.currentRepoFullName) return null
+  return repoStore.currentRepos.some(r => r.full_name === p.full_name) ? null : p
+})
 
 function toggleCollapse() {
   settingsStore.update({ menuCollapsed: !settingsStore.config.menuCollapsed })

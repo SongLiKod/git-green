@@ -43,7 +43,7 @@
 | --- | --- | --- |
 | `/dashboard` | 仪表盘 | 当前账号/仓库概览、数据统计（含**我的 Fork 数**，可点进 `/forks`）、快捷入口 |
 | `/account` | 账号管理 | 多账号常驻：添加（PAT 校验→本地加密）、编辑备注/标签/分组/SSH主机、更新 PAT、状态检测（正常/过期/失效）、删除、**导入/导出加密配置备份**、SSH 公钥管理 |
-| `/repo` | 仓库列表 | 按账号树展开仓库、置顶/收藏/自定义分组、跨账号全局搜索、新建/删除远程仓库、**Fork 按钮（选目标账号/改名/组织/仅默认分支）**、Fork 标签与「源自 xxx」、Forks 计数可点进入 Fork 管理 |
+| `/repo` | 仓库列表 | 按账号树展开仓库、置顶/收藏/自定义分组、跨账号全局搜索、**「搜GitHub」全站模糊搜索（相关度/Stars/更新时间排序 + 分页，结果不入列：「进入查看」仅以预览态打开功能页，点「加入外部」才写入外部列表，每条结果自带 Fork）**、新建/删除远程仓库、**Fork 按钮（选目标账号/改名/组织/仅默认分支）**、Fork 标签与「源自 xxx」、Forks 计数可点进入 Fork 管理 |
 | `/repo-setting` | 仓库设置 | 基本信息、可见性、功能开关、协作者管理、**Fork 与上游卡片（派生关系、与上游差异检查、同步上游、与上游比较、向上游提 PR、Fork 到我的账号）** |
 | `/forks` | Fork 管理 | 当前仓库的 Fork 网络列表（排序：最新/最早/Star/Watch）、Fork 标签（我的/公开私有）、接入或进入、克隆（HTTPS/SSH + 二维码）、复制、删除自己账号下的 Fork（二次确认 + 写日志）、分页加载更多 |
 | `/branch` | 分支管理 | 分支增删改、分支差异对比（文件级 diff + 提交记录，**支持跨仓库比较：base/head 各自选仓库与分支，可比上游与任意 fork**）、分支保护规则 |
@@ -55,6 +55,13 @@
 | `/pull` | Pull Request | 列表（跨 Fork 时显示 `owner:branch`）、详情/评论（Markdown）、文件 diff、审核（RECOMMEND 自动寻找有写权限账号代审）、合并、关闭、**新建时可选「来源仓库」跨 fork 提 PR（深链 `/pull?headOwner=&headRepo=`）** |
 | `/log` | 操作日志 | 本地留痕、模块/级别过滤、导出、按保留天数自动清理 |
 | `/settings` | 设置 | 主题（浅色/深色/跟随系统）、单页/多页签模式、自动同步与巡检、请求并发/超时/重试、**应用锁（PIN、口令加固、空闲/失焦自动锁定、邮箱验证码重置口令）**、备份/还原/危险操作 |
+
+### GitHub 全站搜索与外部列表
+- **入口**：仓库列表顶栏「搜GitHub」开关（桌面/移动都有）；开启后输入关键词即调 `GET /search/repositories`（450ms 防抖、序号丢弃过期响应、相关度/Stars/更新时间排序、分页翻页），有账号时用 PAT 搜索，无账号退回匿名搜索；关键词可直接带 GitHub qualifier（如 `language:vue stars:>1000`）
+- **结果不落库**：搜索结果只做展示，不会自动写入账号列表或外部列表
+  - 「进入查看」= 预览态（`gitgreen_preview_repo`，仅存当前上下文）：仓库设置/分支/Action/Release/文件等页面照常可用，顶栏仓库选择器带「浏览中」标签，点选列表内仓库自动退出预览
+  - 「加入外部」= 落库（`gitgreen_adhoc_repos`）：写入外部列表并在列表中带「外部」标签，可随时「移除」；已在列表时按钮置灰
+  - 「Fork」= 复用 Fork 弹窗（目标账号/改名/组织/仅默认分支），源仓库不在列表也不影响当前上下文
 
 ### Fork 功能细节
 - **创建 Fork**（`POST /repos/{owner}/{repo}/forks`）：目标账号多选、可改名、可 Fork 到组织（`/user/orgs` 懒加载）、仅默认分支；202 异步提交后每 3s 轮询 `GET /repos/{owner}/{repo}`（60s 超时）等待就绪，成功自动切到目标账号并选中新仓库；错误映射 404=源仓库不可读 / 403=禁止 Fork 或权限不足 / 422=已存在同名 Fork
@@ -103,11 +110,13 @@
 - `LabelSelect.vue`：标签多选 `el-select`（可选已有标签、回车新建、每项 `×`，`@remove` 回调用例自行处理删除）
 - `FileDiffList.vue` / `SourceFilePreview.vue`：提交/PR 文件 diff 与源文件预览（`.md` 支持「渲染 / 源码」双视图，渲染复用 `MdRender`）
 - `AppLock.vue` / `QrDialog.vue` / `ThemeSwitch.vue` / `ForkDialog.vue`：应用锁解锁 UI、二维码、主题切换、**Fork 弹窗（目标账号/改名/组织/仅默认分支）**
+- `GithubSearchResults.vue`：**GitHub 全站模糊搜索结果面板**（桌面表格/移动卡片双形态、排序与分页、`进入查看` / `加入外部` / `Fork` 三个动作，`@enter` `@fork` 外抛由页面接管）
+- `OpenLinkDialog.vue`：粘贴 GitHub 链接直达 Issue/PR/提交/文件/Release/Action（账号外仓库自动接入为「外部」）
 
 ### API 层（`src/api`）
 - `request.ts`：axios 实例 + 统一返回 `ApiResult`（200/401/403/409/422/500）、**并发门闩**（默认为 4，可平滑扩容到 60 档，配置接管）、可选指数退避重试、路径分段编码 `encPath`、GitHub GET 防缓存时间戳
 - `githubAccount.ts`：账号本地加密存取、PAT 校验（区分过期/失效）、导入导出（含主密钥材料）
-- `githubRepo.ts` / `githubBranch.ts` / `githubCommit.ts`：仓库（含 `parent`/`source` 派生关系）、分支（保护规则、diff 对比、**跨网络 `owner:branch` 对比**）、提交
+- `githubRepo.ts` / `githubBranch.ts` / `githubCommit.ts`：仓库（含 `parent`/`source` 派生关系、**`searchRepos` 全站搜索**）、分支（保护规则、diff 对比、**跨网络 `owner:branch` 对比**）、提交
 - `githubFork.ts`：创建 Fork（202 异步）、Fork 列表（排序/分页）、所属组织、**同步上游（`merge-upstream`）**
 - `githubIssue.ts`：Issue、评论、时间线（关联提交）、仓库标签（列表/删除）、提交详情
 - `githubPullRequest.ts`：PR、文件、审核、合并、关闭

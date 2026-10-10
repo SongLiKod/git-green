@@ -17,6 +17,7 @@ const META_KEY = 'gitgreen_repo_meta'
 const CURRENT_ACCOUNT_KEY = 'gitgreen_current_account'
 const CURRENT_REPO_KEY = 'gitgreen_current_repo'
 const ADHOC_KEY = 'gitgreen_adhoc_repos'
+const PREVIEW_KEY = 'gitgreen_preview_repo'
 
 function loadMeta(): Record<string, RepoMeta> {
   try {
@@ -35,9 +36,23 @@ function loadAdHoc(): Record<string, GitHubRepo[]> {
   }
 }
 
+/** 搜索结果「进入查看」的预览仓库：只作当前仓库上下文，不进任何列表 */
+function loadPreview(): GitHubRepo | null {
+  try {
+    const raw = localStorage.getItem(PREVIEW_KEY)
+    const repo = raw ? JSON.parse(raw) : null
+    return repo && typeof repo.full_name === 'string' ? (repo as GitHubRepo) : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * 仓库全局状态：树形结构 账号→仓库列表、跨账号全局搜索、
  * 收藏/置顶/自定义分组（全部本地持久化）。
+ * 另含两个独立维度：
+ * - 外部列表（adHocRepos）：搜索结果/「打开链接」手动加入的账号外仓库；
+ * - 预览仓库（previewRepo）：搜索结果「进入查看」的临时上下文，不进任何列表。
  */
 export const useRepoStore = defineStore('repo', () => {
   const accountStore = useAccountStore()
@@ -45,18 +60,30 @@ export const useRepoStore = defineStore('repo', () => {
 
   /** accountId -> repos */
   const reposByAccount = ref<Record<string, GitHubRepo[]>>({})
-  /** 「打开链接」临时接入的外部仓库（非拥有/协作）：accountId -> repos，本地持久化 */
+  /** 「打开链接」「加入外部列表」接入的外部仓库（非拥有/协作）：accountId -> repos，本地持久化 */
   const adHocRepos = ref<Record<string, GitHubRepo[]>>(loadAdHoc())
+  /** 搜索结果「进入查看」的预览仓库：仅作为当前仓库上下文，不写入任何列表 */
+  const previewRepo = ref<GitHubRepo | null>(loadPreview())
   const loadingMap = ref<Record<string, boolean>>({})
   const metaMap = ref<Record<string, RepoMeta>>(loadMeta())
   const currentAccountId = ref<string>(localStorage.getItem(CURRENT_ACCOUNT_KEY) || '')
+  /** 当前选中仓库（预览态兜底见 currentRepo） */
   const currentRepoFullName = ref<string>(localStorage.getItem(CURRENT_REPO_KEY) || '')
+  /**
+   * GitHub 全站搜索模式开关：由 App 顶栏「GitHub搜索」入口与仓库列表页分段选择器共同驱动，
+   * 提升可发现性（顶栏任意页面一键进入搜索态）。
+   */
+  const githubSearchMode = ref(false)
 
   const currentRepos = computed<GitHubRepo[]>(() => reposByAccount.value[currentAccountId.value] || [])
 
-  const currentRepo = computed<GitHubRepo | null>(
-    () => currentRepos.value.find(r => r.full_name === currentRepoFullName.value) || null
-  )
+  const currentRepo = computed<GitHubRepo | null>(() => {
+    const inList = currentRepos.value.find(r => r.full_name === currentRepoFullName.value)
+    if (inList) return inList
+    // 预览仓库（搜索结果「进入查看」）不在任何列表中，单独兜底解析
+    const p = previewRepo.value
+    return p && p.full_name === currentRepoFullName.value ? p : null
+  })
 
   /** 全部已加载仓库（用于跨账号全局搜索） */
   const allLoadedRepos = computed(() => {
@@ -74,6 +101,26 @@ export const useRepoStore = defineStore('repo', () => {
 
   function persistAdHoc() {
     localStorage.setItem(ADHOC_KEY, JSON.stringify(adHocRepos.value))
+  }
+
+  function persistPreview() {
+    if (previewRepo.value) localStorage.setItem(PREVIEW_KEY, JSON.stringify(previewRepo.value))
+    else localStorage.removeItem(PREVIEW_KEY)
+  }
+
+  /** 当前上下文是否为「进入查看」的预览仓库（不在任何列表中） */
+  function isPreviewRepo(fullName: string): boolean {
+    return !!previewRepo.value && previewRepo.value.full_name === fullName
+  }
+
+  /**
+   * 搜索结果「进入查看」：把仓库设为当前上下文供各功能页使用，
+   * 不写入账号列表、也不写入外部列表（只有点击「加入外部」才会写入）。
+   */
+  function enterPreviewRepo(repo: GitHubRepo) {
+    previewRepo.value = repo
+    setCurrentRepo(repo.full_name)
+    persistPreview()
   }
 
   /** 是否为「打开链接」临时接入的外部仓库（任意账号维度） */
@@ -158,7 +205,9 @@ export const useRepoStore = defineStore('repo', () => {
         const saved = localStorage.getItem(CURRENT_REPO_KEY) || ''
         const list = reposByAccount.value[accountId]
         const exists = list.some(r => r.full_name === currentRepoFullName.value)
-        if (!exists) {
+        // 预览仓库（搜索结果「进入查看」）本就不在列表里，保持其选中状态不被回退
+        const previewing = isPreviewRepo(currentRepoFullName.value)
+        if (!exists && !previewing) {
           if (list.some(r => r.full_name === saved)) currentRepoFullName.value = saved
           else if (list.length > 0) setCurrentRepo(list[0].full_name)
           else setCurrentRepo('')
@@ -183,13 +232,23 @@ export const useRepoStore = defineStore('repo', () => {
     const repos = reposByAccount.value[accountId] || []
     if (saved && repos.some(r => r.full_name === saved)) {
       currentRepoFullName.value = saved
-    } else if (repos.length > 0 && !repos.some(r => r.full_name === currentRepoFullName.value)) {
+    } else if (
+      repos.length > 0 &&
+      !repos.some(r => r.full_name === currentRepoFullName.value) &&
+      // 预览仓库正被查看时保持上下文，不回退到列表首个仓库
+      !isPreviewRepo(currentRepoFullName.value)
+    ) {
       setCurrentRepo(repos[0].full_name)
     }
     loadRepos(accountId)
   }
 
   function setCurrentRepo(fullName: string) {
+    // 选中列表内（或其它）仓库时退出预览态，避免旧预览残留
+    if (previewRepo.value && previewRepo.value.full_name !== fullName) {
+      previewRepo.value = null
+      persistPreview()
+    }
     currentRepoFullName.value = fullName
     localStorage.setItem(CURRENT_REPO_KEY, fullName)
   }
@@ -228,6 +287,42 @@ export const useRepoStore = defineStore('repo', () => {
     setCurrentRepo(fullName)
   }
 
+  /** 把仓库注入指定账号列表并登记为「外部」（纯本地持久化，不触碰远程） */
+  function injectAdHoc(accountId: string, repo: GitHubRepo) {
+    const list = reposByAccount.value[accountId] || []
+    if (!list.some(r => r.full_name === repo.full_name)) reposByAccount.value[accountId] = [...list, repo]
+    const saved = adHocRepos.value[accountId] || []
+    if (!saved.some(r => r.full_name === repo.full_name)) {
+      adHocRepos.value[accountId] = [repo, ...saved]
+      persistAdHoc()
+    }
+  }
+
+  /**
+   * 搜索结果「加入外部列表」：只有点击这里，仓库才会写入外部列表并带「外部」标记。
+   * 与「进入查看」互不影响——查看不落库，加入才落库。
+   */
+  async function addAdHocRepo(repo: GitHubRepo): Promise<boolean> {
+    const accountId = currentAccountId.value
+    if (!accountId) {
+      ElMessage.warning('请先在账号管理中添加GitHub账号')
+      return false
+    }
+    if (findAccountIdByRepo(repo.full_name)) {
+      ElMessage.info(`${repo.full_name} 已在仓库列表中`)
+      return true
+    }
+    injectAdHoc(accountId, repo)
+    // 加入列表后该仓库不再需要预览态兜底（同名预览清理，上下文由列表接管）
+    if (isPreviewRepo(repo.full_name)) {
+      previewRepo.value = null
+      persistPreview()
+    }
+    await logStore.write({ module: 'repo', action: '加入外部列表', detail: repo.full_name })
+    ElMessage.success(`已加入外部列表：${repo.full_name}`)
+    return true
+  }
+
   /** 打开非本账号列表的 GitHub 仓库（「打开链接」入口）：拉取元数据注入当前账号列表并选中，本地持久化 */
   async function openExternalRepo(owner: string, repo: string): Promise<boolean> {
     const accountId = currentAccountId.value
@@ -243,13 +338,7 @@ export const useRepoStore = defineStore('repo', () => {
       ElMessage.error(`仓库获取失败（不存在或无权访问）：${res.msg}`)
       return false
     }
-    const list = reposByAccount.value[accountId] || []
-    if (!list.some(r => r.full_name === fullName)) reposByAccount.value[accountId] = [...list, res.data]
-    const adHocSaved = adHocRepos.value[accountId] || []
-    if (!adHocSaved.some(r => r.full_name === fullName)) {
-      adHocRepos.value[accountId] = [res.data, ...adHocSaved]
-      persistAdHoc()
-    }
+    injectAdHoc(accountId, res.data)
     setCurrentRepo(fullName)
     await logStore.write({ module: 'repo', action: '打开外部仓库', detail: fullName })
     return true
@@ -395,8 +484,13 @@ export const useRepoStore = defineStore('repo', () => {
     setCurrentRepo,
     selectRepo,
     openExternalRepo,
+    addAdHocRepo,
     isAdHocRepo,
     removeAdHocRepo,
+    previewRepo,
+    isPreviewRepo,
+    enterPreviewRepo,
+    githubSearchMode,
     findAccountIdByRepo,
     currentOwnerName,
     search,
