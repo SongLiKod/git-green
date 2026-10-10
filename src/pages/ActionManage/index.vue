@@ -876,17 +876,25 @@ async function loadRuns() {
   } else ElMessage.error(`运行记录加载失败：${res.msg}`)
 }
 
-/* ---------- 运行记录 → 发布 tag：Release 的 tag 若指向该次运行的提交，则在历史记录上显示 ---------- */
+/* ---------- 运行记录 → 发布 tag ----------
+ * 只把 Release 挂到「创建它的那次运行」上，避免串号：
+ *  1) Release 创建时间落在该次运行的执行时间窗内（运行末尾的 release job 产出）；
+ *  2) 运行的分支名 = tag 名（推送 tag 触发的运行）；
+ *  3) tag 指向的 commit = 运行 head_sha 只作为同分时的辅助信号——GitHub 打 tag 默认落在
+ *     默认分支当时的 HEAD，并不等于该次运行构建的提交，所以不能单独用 sha 判断。
+ * 若多条运行打分并列、无法确定是谁创建的，则不显示（宁可不显示，也不显示错）。 */
 const runTags = ref<Record<number, string>>({})
-let tagMapCache: { key: string; at: number; map: Map<string, string[]> } | null = null
-let releaseTagsCache: { key: string; at: number; names: string[] } | null = null
+interface ReleaseInfo {
+  tag: string
+  createdAt: string
+}
+let releaseCache: { key: string; at: number; releases: ReleaseInfo[]; tagSha: Map<string, string> } | null = null
 const TAG_MAP_TTL = 60_000
 let tagsLoading = false
 
-/** 手动刷新时强制重新拉取 tag 映射（自动刷新走 60 秒缓存，避免请求过多） */
+/** 手动刷新时强制重新拉取（自动刷新走 60 秒缓存，避免请求过多） */
 function refreshRuns() {
-  tagMapCache = null
-  releaseTagsCache = null
+  releaseCache = null
   loadRuns()
 }
 
@@ -898,12 +906,12 @@ async function loadRunTags() {
   }
   const key = `${c.owner}/${c.repo}`
   const now = Date.now()
-  if (tagMapCache?.key !== key) runTags.value = {}
+  if (releaseCache?.key !== key) runTags.value = {}
 
-  let shaTags = tagMapCache && tagMapCache.key === key && now - tagMapCache.at < TAG_MAP_TTL ? tagMapCache.map : null
-  let releaseNames = releaseTagsCache && releaseTagsCache.key === key && now - releaseTagsCache.at < TAG_MAP_TTL ? releaseTagsCache.names : null
+  let cache =
+    releaseCache && releaseCache.key === key && now - releaseCache.at < TAG_MAP_TTL ? releaseCache : null
 
-  if (!shaTags || !releaseNames) {
+  if (!cache) {
     if (tagsLoading) return // 只拉一轮，结束后下一次 loadRuns 自然命中缓存
     tagsLoading = true
     try {
@@ -914,34 +922,46 @@ async function loadRunTags() {
         listTags(pat, c.owner, c.repo, 2)
       ])
       if (relRes.code === 200 && tagRes1.code === 200 && tagRes2.code === 200) {
-        // 仅统计已发布的 Release（草稿不计入），按创建时间新→旧
-        releaseNames = (relRes.data || []).filter(r => !r.draft).map(r => r.tag_name)
         const tagSha = new Map<string, string>()
-        for (const t of [...(tagRes1.data || []), ...(tagRes2.data || [])]) if (!tagSha.has(t.name)) tagSha.set(t.name, t.commit.sha)
-        const map = new Map<string, string[]>()
-        for (const name of releaseNames) {
-          const sha = tagSha.get(name)
-          if (!sha) continue
-          const arr = map.get(sha) || []
-          arr.push(name)
-          map.set(sha, arr)
+        for (const t of [...(tagRes1.data || []), ...(tagRes2.data || [])])
+          if (!tagSha.has(t.name)) tagSha.set(t.name, t.commit.sha)
+        cache = {
+          key,
+          at: Date.now(),
+          // 仅统计已发布的 Release（草稿不计），列表本身按创建时间新→旧
+          releases: (relRes.data || []).filter(r => !r.draft).map(r => ({ tag: r.tag_name, createdAt: r.created_at })),
+          tagSha
         }
-        shaTags = map
-        tagMapCache = { key, at: Date.now(), map }
-        releaseTagsCache = { key, at: Date.now(), names: releaseNames }
+        releaseCache = cache
       }
     } finally {
       tagsLoading = false
     }
-    if (!shaTags || !releaseNames) return // 拉取失败：保留现有显示
+    if (!cache) return // 拉取失败：保留现有显示
   }
 
   const next: Record<number, string> = {}
-  for (const r of runs.value) {
-    const names = shaTags.get(r.head_sha) || []
-    // 同一提交挂了多个发布 tag 时优先取与本次运行分支/标签同名的那个
-    const hit = names.includes(r.head_branch) ? r.head_branch : names[0] || releaseNames.find(n => n === r.head_branch) || ''
-    if (hit) next[r.id] = hit
+  for (const rel of cache.releases) {
+    const t = Date.parse(rel.createdAt) || 0
+    const sha = cache.tagSha.get(rel.tag)
+    const cands: { id: number; score: number; dist: number }[] = []
+    for (const r of runs.value) {
+      const s = Date.parse(r.created_at)
+      const e = Date.parse(r.updated_at)
+      const inWin = t >= s - 60_000 && t <= e + 60_000
+      const nameHit = r.head_branch === rel.tag
+      if (!inWin && !nameHit) continue
+      let score = 0
+      if (nameHit) score += 4 // 推送 tag 触发：分支名就是 tag 名
+      if (inWin) score += 2 // Release 在该次运行期间创建
+      if (sha && sha === r.head_sha) score += 1 // 辅助信号
+      cands.push({ id: r.id, score, dist: Math.abs(e - t) })
+    }
+    if (!cands.length) continue
+    cands.sort((a, b) => b.score - a.score || a.dist - b.dist)
+    if (cands.length > 1 && cands[0].score === cands[1].score && cands[0].dist === cands[1].dist) continue
+    if (next[cands[0].id]) continue // 一次运行只保留最新的那个发布 tag
+    next[cands[0].id] = rel.tag
   }
   runTags.value = next
 }
@@ -1056,8 +1076,7 @@ async function submitTrigger() {
     ElMessage.success('流水线已触发（若失败请确认该Workflow是否支持 workflow_dispatch 事件）')
     logStore.write({ module: 'action', action: '触发流水线', detail: `${triggerTarget.value.name} @ ${triggerRef.value}`, level: 'warning' })
     // 本地 tag 映射缓存失效，保证新产生的发布 tag 能立刻显示在历史记录上
-    tagMapCache = null
-    releaseTagsCache = null
+    releaseCache = null
     lastTagCache = null
     triggerVisible.value = false
     tab.value = 'runs'
@@ -1544,8 +1563,7 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
   runProgress.value = {}
   lastProgressAt = 0
   runTags.value = {}
-  tagMapCache = null
-  releaseTagsCache = null
+  releaseCache = null
   lastTagCache = null
   lastReleaseTag.value = ''
   loadWorkflows()
