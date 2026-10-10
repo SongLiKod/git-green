@@ -3,6 +3,7 @@
     <!-- 移动端形态（Vant） -->
     <template v-if="isMobile">
       <van-search
+        ref="mSearchRef"
         v-model="searchKw"
         :placeholder="ghMode ? '模糊搜索 GitHub 上的仓库（名称/描述/语言）' : '跨账号全局搜索仓库'"
         shape="round"
@@ -11,9 +12,9 @@
         <van-tab v-for="acc in accountStore.accounts" :key="acc.id" :title="acc.remark || acc.username" />
       </van-tabs>
       <div class="m-toolbar">
-        <van-button size="small" plain :type="ghMode ? 'primary' : 'default'" @click="ghMode = !ghMode">
-          {{ ghMode ? '退出搜GitHub' : '搜GitHub' }}
-        </van-button>
+        <!-- 搜索范围：本地（已加载仓库） / GitHub（全站模糊搜索，结果不入列） -->
+        <van-button size="small" :type="ghMode ? 'default' : 'primary'" :plain="ghMode" @click="ghMode = false">本地</van-button>
+        <van-button size="small" :type="ghMode ? 'primary' : 'default'" :plain="!ghMode" @click="ghMode = true">GitHub搜索</van-button>
         <van-button type="primary" size="small" @click="createVisible = true">新建远程仓库</van-button>
         <van-button size="small" :loading="loading" @click="repoStore.refreshCurrent()">刷新</van-button>
         <van-button size="small" plain :type="onlyFavorite ? 'warning' : 'default'" @click="onlyFavorite = !onlyFavorite">
@@ -130,14 +131,14 @@
     <template v-else>
     <div class="page-toolbar">
       <el-input
+        ref="deskSearchRef"
         v-model="searchKw"
         :placeholder="ghMode ? '输入关键词模糊搜索 GitHub 上的仓库（名称/描述/语言，支持 qualifier）' : '跨账号全局搜索仓库（名称/简介）'"
         clearable
-        style="width: 360px"
+        style="width: 340px"
       />
-      <el-button :type="ghMode ? 'primary' : 'default'" :plain="!ghMode" @click="ghMode = !ghMode">
-        {{ ghMode ? '退出搜GitHub' : '搜GitHub' }}
-      </el-button>
+      <!-- 搜索范围分段：本地（已加载仓库）/ GitHub（全站模糊搜索，结果不入列） -->
+      <el-segmented v-model="scopeValue" :options="scopeOptions" size="small" style="width: 176px" />
       <el-button type="primary" @click="createVisible = true">新建远程仓库</el-button>
       <el-button :loading="loading" @click="repoStore.refreshCurrent()">刷新仓库</el-button>
     </div>
@@ -348,7 +349,7 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'RepoList' })
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TreeInstance } from 'element-plus'
@@ -372,8 +373,46 @@ const router = useRouter()
 const route = useRoute()
 
 const searchKw = ref('')
-/** 开关「搜GitHub」：开启后展示 GitHub 全站模糊搜索结果面板 */
-const ghMode = ref(false)
+/**
+ * 搜索范围：本地（跨账号已加载仓库）/ GitHub（全站模糊搜索）。
+ * 状态放在 store，App 顶栏「GitHub搜索」入口与页内分段选择器共用。
+ */
+const ghMode = computed({
+  get: () => repoStore.githubSearchMode,
+  set: (v: boolean) => {
+    repoStore.githubSearchMode = v
+  }
+})
+/** 桌面端分段选择器（本地 / GitHub搜索） */
+const scopeValue = computed({
+  get: () => (ghMode.value ? 'github' : 'local'),
+  set: (v: string | number) => {
+    ghMode.value = String(v) === 'github'
+  }
+})
+const scopeOptions = [
+  { label: '本地', value: 'local' },
+  { label: 'GitHub搜索', value: 'github' }
+]
+
+/* ---------- 搜索框聚焦：顶栏「GitHub搜索」一键进入或页内切换范围时自动聚焦 ---------- */
+const deskSearchRef = ref<any>()
+const mSearchRef = ref<any>()
+
+function focusSearch() {
+  nextTick(() => {
+    const root = deskSearchRef.value?.$el || mSearchRef.value?.$el
+    const input = root && typeof root.querySelector === 'function' ? root.querySelector('input') : null
+    input?.focus()
+  })
+}
+
+watch(ghMode, v => {
+  if (v) focusSearch()
+})
+onActivated(() => {
+  if (ghMode.value) focusSearch()
+})
 const onlyFavorite = ref(false)
 const onlyAdHoc = ref(false)
 const createVisible = ref(false)
@@ -731,6 +770,7 @@ async function loadBranchOptions() {
 }
 
 onMounted(async () => {
+  if (ghMode.value) focusSearch()
   if (!repoStore.currentAccountId && accountStore.activeId) repoStore.setCurrentAccount(accountStore.activeId)
   for (const acc of accountStore.accounts) repoStore.loadRepos(acc.id)
   if (isWindows) {

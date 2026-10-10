@@ -99,6 +99,10 @@
             <span class="platform-tag">{{ platformName }}</span>
           </div>
           <div class="header-right">
+            <el-button link type="primary" @click="openGithubSearch">
+              <el-icon><Search /></el-icon>
+              <span style="margin-left: 4px">GitHub搜索</span>
+            </el-button>
             <el-button link type="primary" @click="openLinkVisible = true">
               <el-icon><Link /></el-icon>
               <span style="margin-left: 4px">打开链接</span>
@@ -131,6 +135,9 @@
                 :value="previewOption.full_name"
               />
             </el-select>
+            <div class="icon-btn" title="GitHub搜索" @click="openGithubSearch">
+              <el-icon :size="18"><Search /></el-icon>
+            </div>
             <div class="icon-btn" title="打开链接" @click="openLinkVisible = true">
               <el-icon :size="18"><Link /></el-icon>
             </div>
@@ -198,7 +205,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, RefreshRight, Odometer, Tickets, Connection, Link, CopyDocument } from '@element-plus/icons-vue'
+import { User, Folder, FolderOpened, Tools, Share, Clock, VideoPlay, Download, Document, Setting, Notebook, Expand, Fold, RefreshRight, Odometer, Tickets, Connection, Link, CopyDocument, Search } from '@element-plus/icons-vue'
 import AppLock from '@/components/AppLock.vue'
 import OpenLinkDialog from '@/components/OpenLinkDialog.vue'
 import { useAccountStore } from '@/stores/useAccountStore'
@@ -270,6 +277,12 @@ function onRepoMenuSelect(action: { path?: string; name?: string }) {
 function onMobileRefresh() {
   if (showContextBar.value) repoStore.refreshCurrent()
   else accountStore.checkAll()
+}
+
+/** 顶栏「GitHub搜索」：任意页面一键进入 GitHub 全站模糊搜索（落到仓库列表并开启搜索范围，输入框自动聚焦） */
+function openGithubSearch() {
+  repoStore.githubSearchMode = true
+  if (route.path !== '/repo') router.push('/repo')
 }
 
 const collapsed = computed(() => settingsStore.config.menuCollapsed)

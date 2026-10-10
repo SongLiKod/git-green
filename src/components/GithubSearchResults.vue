@@ -20,6 +20,7 @@
       </div>
     </template>
 
+    <div class="gs-hint">结果不会自动加入任何列表：「进入查看」仅预览功能页，点「加入外部」才写入外部列表，「Fork」可直接 Fork 到你的账号</div>
     <el-alert v-if="errMsg" type="warning" :closable="false" :title="errMsg" style="margin-bottom: 10px" />
     <el-table :data="results" v-loading="loading" size="small" height="340">
       <el-table-column label="仓库" min-width="240">
@@ -83,6 +84,7 @@
         <van-button size="mini" plain :loading="loading" :disabled="!appliedKeyword" @click="fetch(page)">重搜</van-button>
       </div>
     </div>
+    <div class="gs-hint">查看不入列表，点「加入外部」才加入，也可直接 Fork</div>
     <div v-if="errMsg" class="gs-err">{{ errMsg }}</div>
     <van-loading v-if="loading" class="gs-loading" size="24px" vertical>正在搜索 GitHub…</van-loading>
     <template v-else>
@@ -314,6 +316,12 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-secondary);
 }
+.gs-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 18px;
+  margin: 4px 0 10px;
+}
 .gs-err {
   margin: 8px 12px 0;
   padding: 8px 10px;
@@ -331,5 +339,8 @@ onBeforeUnmount(() => {
 }
 .gs-item {
   margin-top: 10px;
+}
+.gs-mobile .gs-hint {
+  margin: 6px 12px 0;
 }
 </style>

@@ -67,7 +67,13 @@ export const useRepoStore = defineStore('repo', () => {
   const loadingMap = ref<Record<string, boolean>>({})
   const metaMap = ref<Record<string, RepoMeta>>(loadMeta())
   const currentAccountId = ref<string>(localStorage.getItem(CURRENT_ACCOUNT_KEY) || '')
+  /** 当前选中仓库（预览态兜底见 currentRepo） */
   const currentRepoFullName = ref<string>(localStorage.getItem(CURRENT_REPO_KEY) || '')
+  /**
+   * GitHub 全站搜索模式开关：由 App 顶栏「GitHub搜索」入口与仓库列表页分段选择器共同驱动，
+   * 提升可发现性（顶栏任意页面一键进入搜索态）。
+   */
+  const githubSearchMode = ref(false)
 
   const currentRepos = computed<GitHubRepo[]>(() => reposByAccount.value[currentAccountId.value] || [])
 
@@ -484,6 +490,7 @@ export const useRepoStore = defineStore('repo', () => {
     previewRepo,
     isPreviewRepo,
     enterPreviewRepo,
+    githubSearchMode,
     findAccountIdByRepo,
     currentOwnerName,
     search,
