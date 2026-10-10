@@ -8,7 +8,7 @@
           <van-button type="primary" size="small" @click="openCreate">创建分支</van-button>
           <van-button size="small" :loading="loading" @click="loadBranches">刷新</van-button>
         </div>
-        <div v-for="(b, idx) in branches" :key="b.name" class="m-card">
+        <div v-for="(b, idx) in visibleBranches" :key="b.name" class="m-card">
           <div class="m-card-head">
             <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
@@ -24,6 +24,7 @@
             <van-button size="mini" type="danger" plain @click="onDelete(b)">删除</van-button>
           </div>
         </div>
+        <van-button v-if="branchesHasMore" block size="small" style="margin-top: 10px" @click="showMoreBranches">加载更多</van-button>
 
         <div class="m-section-title">分支差异对比</div>
         <van-cell-group inset>
@@ -110,7 +111,7 @@
             </div>
           </div>
         </template>
-        <el-table :data="branches" border stripe v-loading="loading" height="100%">
+        <el-table :data="visibleBranches" border stripe v-loading="loading" height="100%">
           <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="分支名" min-width="200">
             <template #default="{ row }">
@@ -132,6 +133,9 @@
             </template>
           </el-table-column>
         </el-table>
+        <div v-if="branchesHasMore" class="load-more">
+          <el-button @click="showMoreBranches">加载更多</el-button>
+        </div>
       </el-card>
 
       <el-card shadow="never">
@@ -405,6 +409,14 @@ const repo = computed(() => repoStore.currentRepo)
 const ctx = computed(() => repoStore.currentOwnerName())
 
 const branches = ref<GitHubBranch[]>([])
+/** 分支列表分页显示：一次只展示一部分，点「加载更多」再追加（同提交历史列表交互） */
+const BRANCH_PAGE = 30
+const branchVisible = ref(BRANCH_PAGE)
+const visibleBranches = computed(() => branches.value.slice(0, branchVisible.value))
+const branchesHasMore = computed(() => branches.value.length > branchVisible.value)
+function showMoreBranches() {
+  branchVisible.value += BRANCH_PAGE
+}
 const loading = ref(false)
 const saving = ref(false)
 
@@ -441,6 +453,7 @@ async function loadBranches() {
   loading.value = false
   if (res.code === 200) {
     branches.value = res.data || []
+    branchVisible.value = BRANCH_PAGE
     if (!diffBase.value) diffBase.value = repo.value?.default_branch || branches.value[0]?.name || ''
     if (!diffHead.value) diffHead.value = branches.value.find(b => b.name !== diffBase.value)?.name || ''
     // 同仓库侧分支列表直接复用本仓库分支
@@ -730,6 +743,10 @@ onMounted(() => {
 <style scoped>
 .mb14 {
   margin-bottom: 14px;
+}
+.load-more {
+  margin-top: 12px;
+  text-align: center;
 }
 /* 桌面端：页面撑满可视高度，列表卡片填满剩余空间，底部不留空白 */
 .page.is-desktop {

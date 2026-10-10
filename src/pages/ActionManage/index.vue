@@ -62,6 +62,7 @@
               <van-button v-if="r.status === 'completed'" size="mini" plain @click="rerun(r)">重新运行</van-button>
             </div>
           </div>
+          <van-button v-if="runsHasMore" block size="small" style="margin-top: 10px" :loading="runsLoadingMore" @click="loadMoreRuns">加载更多</van-button>
         </template>
 
         <template v-else>
@@ -272,7 +273,7 @@
 
         <el-tab-pane label="执行记录" name="runs">
           <div class="runs-toolbar">
-            <el-select v-model="runFilterWorkflow" clearable placeholder="全部工作流" style="width: 220px" @change="loadRuns">
+            <el-select v-model="runFilterWorkflow" clearable placeholder="全部工作流" style="width: 220px" @change="onRunFilterChange">
               <el-option v-for="w in workflows" :key="w.id" :label="w.name" :value="w.id" />
             </el-select>
             <el-button @click="refreshRuns">刷新</el-button>
@@ -318,6 +319,9 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="runsHasMore" class="load-more">
+            <el-button :loading="runsLoadingMore" @click="loadMoreRuns">加载更多</el-button>
+          </div>
         </el-tab-pane>
 
         <el-tab-pane label="环境变量" name="vars">
@@ -745,6 +749,7 @@ function onMPickerConfirm(payload: { selectedValues: (string | number)[] }) {
   else if (mPickerAction === 'bool') triggerVals[mBoolTargetId] = String(v)
   else {
     runFilterWorkflow.value = Number(v) || undefined
+    resetRunsPaging()
     loadRuns()
   }
   mPickerVisible.value = false
@@ -759,6 +764,11 @@ const saving = ref(false)
 const workflows = ref<Workflow[]>([])
 const runs = ref<WorkflowRun[]>([])
 const runFilterWorkflow = ref<number | undefined>(undefined)
+/** 执行记录分页加载：默认只加载第一页，点「加载更多」再追加后续页（同提交历史列表交互） */
+const runPage = ref(1)
+const runTotal = ref(0)
+const runsLoadingMore = ref(false)
+const runsHasMore = computed(() => runs.value.length > 0 && runs.value.length < runTotal.value)
 const autoRefresh = ref(false)
 const branchNames = ref<string[]>([])
 
@@ -863,17 +873,47 @@ async function loadWorkflows() {
   if (bres.code === 200) branchNames.value = (bres.data || []).map(b => b.name)
 }
 
+/** 拉取已加载的各页（自动刷新时按已加载页数整体刷新，保持分页状态不缩水） */
 async function loadRuns() {
-  if (!ctx.value) return
+  const c = ctx.value
+  if (!c || runsLoadingMore.value) return
   runsLoading.value = true
   const pat = await withPat()
-  const res = await listRuns(pat, ctx.value.owner, ctx.value.repo, runFilterWorkflow.value)
+  const pages = Array.from({ length: runPage.value }, (_, i) => i + 1)
+  const resps = await Promise.all(
+    pages.map(p => listRuns(pat, c.owner, c.repo, runFilterWorkflow.value, p))
+  )
   runsLoading.value = false
+  const failed = resps.find(r => r.code !== 200)
+  if (failed) {
+    ElMessage.error(`运行记录加载失败：${failed.msg}`)
+    return
+  }
+  runs.value = resps.flatMap(r => r.data?.workflow_runs || [])
+  runTotal.value = resps[0]?.data?.total_count || runs.value.length
+  maybeLoadRunProgress()
+  void loadRunTags()
+}
+
+/** 加载更多：追加下一页运行记录 */
+async function loadMoreRuns() {
+  if (!ctx.value || runsLoadingMore.value || !runsHasMore.value) return
+  runsLoadingMore.value = true
+  const pat = await withPat()
+  const res = await listRuns(pat, ctx.value.owner, ctx.value.repo, runFilterWorkflow.value, runPage.value + 1)
+  runsLoadingMore.value = false
   if (res.code === 200) {
-    runs.value = res.data?.workflow_runs || []
-    maybeLoadRunProgress()
-    void loadRunTags()
-  } else ElMessage.error(`运行记录加载失败：${res.msg}`)
+    runs.value = [...runs.value, ...(res.data?.workflow_runs || [])]
+    runPage.value += 1
+    if (res.data?.total_count) runTotal.value = res.data.total_count
+  } else ElMessage.error(`加载更多失败：${res.msg}`)
+}
+
+/** 切换筛选工作流：重置分页从头加载 */
+function resetRunsPaging() {
+  runPage.value = 1
+  runTotal.value = 0
+  runs.value = []
 }
 
 /* ---------- 运行记录 → 发布 tag（实际执行关联）
@@ -1082,6 +1122,12 @@ function levelText(level: string) {
 function viewRuns(w: Workflow) {
   runFilterWorkflow.value = w.id
   tab.value = 'runs'
+  resetRunsPaging()
+  loadRuns()
+}
+
+function onRunFilterChange() {
+  resetRunsPaging()
   loadRuns()
 }
 
@@ -1604,6 +1650,7 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
   jobsCache.clear()
   lastTagCache = null
   lastReleaseTag.value = ''
+  resetRunsPaging()
   loadWorkflows()
   loadRuns()
   if (tab.value === 'vars') loadVars()
@@ -1648,6 +1695,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .mono {
   font-family: Consolas, monospace;
+}
+.load-more {
+  margin-top: 12px;
+  text-align: center;
 }
 .action-tabs {
   background: var(--bg-card);

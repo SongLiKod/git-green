@@ -9,7 +9,7 @@
           <van-button size="small" :loading="loading" @click="loadReleases">刷新</van-button>
         </div>
         <van-empty v-if="releases.length === 0" description="暂无 Release" />
-        <div v-for="(r, idx) in releases" :key="r.id" class="m-card">
+        <div v-for="(r, idx) in visibleReleases" :key="r.id" class="m-card">
           <div class="m-card-head">
             <span v-if="settings.config.showRowIndex" class="m-idx">{{ idx + 1 }}</span>
             <div class="m-card-title">
@@ -26,6 +26,7 @@
             <van-button size="mini" type="danger" plain @click="onDelete(r)">删除</van-button>
           </div>
         </div>
+        <van-button v-if="releasesHasMore" block size="small" style="margin-top: 10px" @click="showMoreReleases">加载更多</van-button>
 
         <template v-if="tasks.length">
           <div class="m-section-title">下载任务（完成后可直接打开）</div>
@@ -128,7 +129,7 @@
             </div>
           </div>
         </template>
-        <el-table :data="releases" border stripe v-loading="loading">
+        <el-table :data="visibleReleases" border stripe v-loading="loading">
           <el-table-column v-if="settings.config.showRowIndex" type="index" label="#" width="55" />
           <el-table-column label="版本" min-width="180">
             <template #default="{ row }">
@@ -157,6 +158,9 @@
             </template>
           </el-table-column>
         </el-table>
+        <div v-if="releasesHasMore" class="load-more">
+          <el-button @click="showMoreReleases">加载更多</el-button>
+        </div>
       </el-card>
 
       <el-card shadow="never">
@@ -328,6 +332,14 @@ const router = useRouter()
 const ctx = computed(() => repoStore.currentOwnerName())
 const repo = computed(() => repoStore.currentRepo)
 const releases = ref<Release[]>([])
+/** Release 版本列表分页显示：一次只展示一部分，点「加载更多」再追加（同提交历史列表交互） */
+const RELEASE_PAGE = 30
+const releaseVisible = ref(RELEASE_PAGE)
+const visibleReleases = computed(() => releases.value.slice(0, releaseVisible.value))
+const releasesHasMore = computed(() => releases.value.length > releaseVisible.value)
+function showMoreReleases() {
+  releaseVisible.value += RELEASE_PAGE
+}
 const loading = ref(false)
 const saving = ref(false)
 
@@ -378,8 +390,10 @@ async function loadReleases() {
   const pat = await withPat()
   const res = await releaseApi.listReleases(pat, ctx.value.owner, ctx.value.repo)
   loading.value = false
-  if (res.code === 200) releases.value = res.data || []
-  else ElMessage.error(`Release加载失败：${res.msg}`)
+  if (res.code === 200) {
+    releases.value = res.data || []
+    releaseVisible.value = RELEASE_PAGE
+  } else ElMessage.error(`Release加载失败：${res.msg}`)
 }
 
 function openCreate() {
@@ -720,6 +734,10 @@ onBeforeUnmount(() => setNativeMessageHandler(null))
 <style scoped>
 .mb14 {
   margin-bottom: 14px;
+}
+.load-more {
+  margin-top: 12px;
+  text-align: center;
 }
 .card-header {
   display: flex;
