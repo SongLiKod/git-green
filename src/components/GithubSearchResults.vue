@@ -1,6 +1,6 @@
 <template>
-  <!-- 桌面形态（Element Plus） -->
-  <el-card v-if="!isMobile" shadow="never" class="gs-card">
+  <!-- 桌面形态（Element Plus）：没输入关键词、也没搜过 → 不渲染面板，避免常驻占屏 -->
+  <el-card v-if="showPanel && !isMobile" shadow="never" class="gs-card">
     <template #header>
       <div class="gs-header">
         <span class="gs-title">
@@ -16,13 +16,14 @@
             <el-option label="按更新时间" value="updated" />
           </el-select>
           <el-button size="small" :loading="loading" :disabled="!appliedKeyword" @click="fetch(page)">重新搜索</el-button>
+          <el-button size="small" text type="danger" @click="emit('close')">退出搜索</el-button>
         </div>
       </div>
     </template>
 
     <div class="gs-hint">结果不会自动加入任何列表：「进入查看」仅预览功能页，点「加入外部」才写入外部列表，「Fork」可直接 Fork 到你的账号</div>
     <el-alert v-if="errMsg" type="warning" :closable="false" :title="errMsg" style="margin-bottom: 10px" />
-    <el-table :data="results" v-loading="loading" size="small" height="340">
+    <el-table ref="tableRef" :data="results" v-loading="loading" size="small" height="340">
       <el-table-column label="仓库" min-width="240">
         <template #default="{ row }">
           <div class="gs-name">
@@ -71,7 +72,7 @@
   </el-card>
 
   <!-- 移动端形态（Vant） -->
-  <div v-else class="gs-mobile">
+  <div v-else-if="showPanel" ref="mobileRef" class="gs-mobile">
     <div class="gs-header">
       <span class="gs-title">
         GitHub 全站搜索：
@@ -82,6 +83,7 @@
       <div class="gs-ops">
         <van-button size="mini" plain @click="cycleSort">排序：{{ SORT_LABELS[sort] }}</van-button>
         <van-button size="mini" plain :loading="loading" :disabled="!appliedKeyword" @click="fetch(page)">重搜</van-button>
+        <van-button size="mini" plain type="danger" @click="emit('close')">退出</van-button>
       </div>
     </div>
     <div class="gs-hint">查看不入列表，点「加入外部」才加入，也可直接 Fork</div>
@@ -130,7 +132,7 @@
 
 <script setup lang="ts">
 defineOptions({ name: 'GithubSearchResults' })
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useRepoStore } from '@/stores/useRepoStore'
 import { searchRepos, type GitHubRepo, type RepoSearchSort } from '@/api/githubRepo'
@@ -140,6 +142,8 @@ const props = defineProps<{ keyword: string }>()
 const emit = defineEmits<{
   (e: 'enter', repo: GitHubRepo): void
   (e: 'fork', repo: GitHubRepo): void
+  /** 退出全站搜索（父级关掉搜索范围并清空关键词） */
+  (e: 'close'): void
 }>()
 
 const accountStore = useAccountStore()
@@ -165,6 +169,24 @@ const loading = ref(false)
 const errMsg = ref('')
 /** 实际发起搜索的关键词（输入变化有防抖，展示以生效值为准） */
 const appliedKeyword = ref('')
+/** 面板显隐：未输入关键词且从未搜过时完全不渲染；输入即出现、清空即消失 */
+const showPanel = computed(() => !!props.keyword.trim() || !!appliedKeyword.value)
+const tableRef = ref<any>()
+const mobileRef = ref<HTMLElement>()
+
+/** 翻页/重搜后把列表复位到顶部：桌面端是表格内部滚动，移动端把整个面板滚回顶端 */
+function resetScroll() {
+  void nextTick(() => {
+    if (isMobile.value) {
+      mobileRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    const wrap: HTMLElement | null =
+      tableRef.value?.$el?.querySelector('.el-scrollbar__wrap') ||
+      tableRef.value?.$el?.querySelector('.el-table__body-wrapper')
+    if (wrap) wrap.scrollTop = 0
+  })
+}
 let seq = 0
 let debounceTimer: number | undefined
 
@@ -237,7 +259,11 @@ async function fetch(pageNo: number) {
       errMsg.value = `搜索异常：${String(e?.message || e)}`
     }
   } finally {
-    if (mySeq === seq) loading.value = false
+    if (mySeq === seq) {
+      loading.value = false
+      // 新一批结果渲染后复位滚动位置，避免停留在上一页的底部
+      resetScroll()
+    }
   }
 }
 
