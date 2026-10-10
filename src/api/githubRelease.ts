@@ -40,7 +40,7 @@ export function listReleases(token: string, owner: string, repo: string): Promis
   }) as unknown as Promise<ApiResult<Release[]>>
 }
 
-/** 仓库标签（tag 指向的 commit sha，用于把运行记录映射到发布 tag） */
+/** 仓库标签（tag 名与其指向的 commit） */
 export interface RepoTag {
   name: string
   commit: { sha: string; url: string }

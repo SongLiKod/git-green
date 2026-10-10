@@ -544,7 +544,7 @@ import type { Workflow, WorkflowRun, RunJob, RepoVariable, RepoSecret, RunArtifa
 import { type ApiResult } from '@/api/request'
 import { getBranches } from '@/api/githubBranch'
 import { base64ToUtf8 } from '@/utils/crypto'
-import { listReleases, listTags } from '@/api/githubRelease'
+import { listReleases } from '@/api/githubRelease'
 import { shortenPath } from '@/utils/file'
 import { saveDownload } from '@/utils/db'
 import { executeDownload, saveBlob } from '@/utils/downloader'
@@ -876,26 +876,47 @@ async function loadRuns() {
   } else ElMessage.error(`运行记录加载失败：${res.msg}`)
 }
 
-/* ---------- 运行记录 → 发布 tag ----------
- * 只把 Release 挂到「创建它的那次运行」上，避免串号：
- *  1) Release 创建时间落在该次运行的执行时间窗内（运行末尾的 release job 产出）；
- *  2) 运行的分支名 = tag 名（推送 tag 触发的运行）；
- *  3) tag 指向的 commit = 运行 head_sha 只作为同分时的辅助信号——GitHub 打 tag 默认落在
- *     默认分支当时的 HEAD，并不等于该次运行构建的提交，所以不能单独用 sha 判断。
- * 若多条运行打分并列、无法确定是谁创建的，则不显示（宁可不显示，也不显示错）。 */
+/* ---------- 运行记录 → 发布 tag（实际执行关联）
+ * 踩过的坑，全部按实际数据修正：
+ *  · 草稿式发布（先建草稿再上传产物）的 Release.created_at 只是草稿创建时间，会成片早于实际发布，
+ *    时间对齐必须用 published_at；
+ *  · GitHub 的 tag 默认落在默认分支当时的 HEAD（target_commitish=main），不是发布运行的提交，
+ *    所以 tag sha ↔ head_sha 关联必然错，禁用；
+ *  · API 不返回 workflow_dispatch 的 inputs，无法凭输入匹配，禁用。
+ * 实际执行的判据（优先级从高到低）：
+ *  1) 该次运行里有名字含 release/publish/发布 且成功的 Job，其完成时间距发布 ≤3 分钟——就是它发布的；
+ *  2) 无 1) 时兜底：发布时刻只落在一次运行的时间窗内，且距其完成时间 ≤2 分钟；
+ *  并列或都不满足则不显示（宁可不显示，也不显示错）。 */
 const runTags = ref<Record<number, string>>({})
 interface ReleaseInfo {
   tag: string
-  createdAt: string
+  /** 发布时间戳（ms），published_at 优先、缺失回落 created_at */
+  at: number
 }
-let releaseCache: { key: string; at: number; releases: ReleaseInfo[]; tagSha: Map<string, string> } | null = null
+let releaseCache: { key: string; at: number; releases: ReleaseInfo[] } | null = null
+/** run jobs 缓存（发布判定要读 Job，TTL 比 Release 长，避免每轮重复拉取） */
+const jobsCache = new Map<number, { at: number; jobs: RunJob[] }>()
 const TAG_MAP_TTL = 60_000
+const JOBS_TTL = 300_000
 let tagsLoading = false
 
 /** 手动刷新时强制重新拉取（自动刷新走 60 秒缓存，避免请求过多） */
 function refreshRuns() {
   releaseCache = null
+  jobsCache.clear()
   loadRuns()
+}
+
+/** 取某次运行的 Job 列表（带缓存；失败返回 null 不参与判定） */
+async function runJobsOf(owner: string, repo: string, runId: number): Promise<RunJob[] | null> {
+  const hit = jobsCache.get(runId)
+  if (hit && Date.now() - hit.at < JOBS_TTL) return hit.jobs
+  const pat = await withPat()
+  const res = await listRunJobs(pat, owner, repo, runId)
+  if (res.code !== 200 || !res.data) return null
+  const jobs = res.data.jobs || []
+  jobsCache.set(runId, { at: Date.now(), jobs })
+  return jobs
 }
 
 async function loadRunTags() {
@@ -906,7 +927,10 @@ async function loadRunTags() {
   }
   const key = `${c.owner}/${c.repo}`
   const now = Date.now()
-  if (releaseCache?.key !== key) runTags.value = {}
+  if (releaseCache?.key !== key) {
+    runTags.value = {}
+    jobsCache.clear()
+  }
 
   let cache =
     releaseCache && releaseCache.key === key && now - releaseCache.at < TAG_MAP_TTL ? releaseCache : null
@@ -916,21 +940,15 @@ async function loadRunTags() {
     tagsLoading = true
     try {
       const pat = await withPat()
-      const [relRes, tagRes1, tagRes2] = await Promise.all([
-        listReleases(pat, c.owner, c.repo),
-        listTags(pat, c.owner, c.repo, 1),
-        listTags(pat, c.owner, c.repo, 2)
-      ])
-      if (relRes.code === 200 && tagRes1.code === 200 && tagRes2.code === 200) {
-        const tagSha = new Map<string, string>()
-        for (const t of [...(tagRes1.data || []), ...(tagRes2.data || [])])
-          if (!tagSha.has(t.name)) tagSha.set(t.name, t.commit.sha)
+      const relRes = await listReleases(pat, c.owner, c.repo)
+      if (relRes.code === 200) {
         cache = {
           key,
           at: Date.now(),
           // 仅统计已发布的 Release（草稿不计），列表本身按创建时间新→旧
-          releases: (relRes.data || []).filter(r => !r.draft).map(r => ({ tag: r.tag_name, createdAt: r.created_at })),
-          tagSha
+          releases: (relRes.data || [])
+            .filter(r => !r.draft)
+            .map(r => ({ tag: r.tag_name, at: Date.parse(r.published_at || r.created_at) || 0 }))
         }
         releaseCache = cache
       }
@@ -941,27 +959,46 @@ async function loadRunTags() {
   }
 
   const next: Record<number, string> = {}
+  const claimed = new Set<number>()
   for (const rel of cache.releases) {
-    const t = Date.parse(rel.createdAt) || 0
-    const sha = cache.tagSha.get(rel.tag)
-    const cands: { id: number; score: number; dist: number }[] = []
-    for (const r of runs.value) {
+    if (!rel.at) continue
+    // 候选：发布时刻落在该次运行时间窗内（run 列表已排除 PR 运行）
+    const cands = runs.value.filter(r => {
+      if (claimed.has(r.id)) return false
       const s = Date.parse(r.created_at)
       const e = Date.parse(r.updated_at)
-      const inWin = t >= s - 60_000 && t <= e + 60_000
-      const nameHit = r.head_branch === rel.tag
-      if (!inWin && !nameHit) continue
-      let score = 0
-      if (nameHit) score += 4 // 推送 tag 触发：分支名就是 tag 名
-      if (inWin) score += 2 // Release 在该次运行期间创建
-      if (sha && sha === r.head_sha) score += 1 // 辅助信号
-      cands.push({ id: r.id, score, dist: Math.abs(e - t) })
-    }
+      return rel.at >= s - 60_000 && rel.at <= e + 60_000
+    })
     if (!cands.length) continue
-    cands.sort((a, b) => b.score - a.score || a.dist - b.dist)
-    if (cands.length > 1 && cands[0].score === cands[1].score && cands[0].dist === cands[1].dist) continue
-    if (next[cands[0].id]) continue // 一次运行只保留最新的那个发布 tag
-    next[cands[0].id] = rel.tag
+    const scored: { id: number; score: number; dist: number }[] = []
+    for (const r of cands.slice(0, 8)) {
+      const jobs = await runJobsOf(c.owner, c.repo, r.id)
+      // 判据 1：成功的发布类 Job，完成时间贴近 Release 发布时间
+      const pub = (jobs || []).find(
+        j =>
+          j.conclusion === 'success' &&
+          /release|publish|发布/i.test(j.name) &&
+          j.completed_at &&
+          Math.abs(Date.parse(j.completed_at) - rel.at) <= 180_000
+      )
+      if (pub) {
+        scored.push({ id: r.id, score: 8, dist: Math.abs(Date.parse(pub.completed_at!) - rel.at) })
+      } else if (!jobs) {
+        // Job 拉取失败：退回时间窗兜底，但要求贴得更近
+        const e = Date.parse(r.updated_at)
+        if (Math.abs(e - rel.at) <= 120_000) scored.push({ id: r.id, score: 2, dist: Math.abs(e - rel.at) })
+      } else {
+        // 判据 2：无发布 Job 名匹配时，仅当运行刚结束即发布才兜底
+        const e = Date.parse(r.updated_at)
+        if (Math.abs(e - rel.at) <= 120_000) scored.push({ id: r.id, score: 1, dist: Math.abs(e - rel.at) })
+      }
+    }
+    if (!scored.length) continue
+    scored.sort((a, b) => b.score - a.score || a.dist - b.dist)
+    if (scored.length > 1 && scored[0].score === scored[1].score && scored[0].dist === scored[1].dist)
+      continue // 并列无法确定 → 宁可不显示
+    claimed.add(scored[0].id)
+    next[scored[0].id] = rel.tag
   }
   runTags.value = next
 }
@@ -1564,6 +1601,7 @@ watch(() => [repoStore.currentRepoFullName, repoStore.currentRepo?.id, accountSt
   lastProgressAt = 0
   runTags.value = {}
   releaseCache = null
+  jobsCache.clear()
   lastTagCache = null
   lastReleaseTag.value = ''
   loadWorkflows()
